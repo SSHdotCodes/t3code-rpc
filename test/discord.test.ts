@@ -181,3 +181,40 @@ test("presence: reconnects and replays the desired activity", async () => {
   await client.stop();
   await fake.close();
 });
+
+test("presence: keeps retrying until Discord starts", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "t3rpc-late-"));
+  const path = join(dir, "discord-ipc-0");
+  const client = new PresenceClient({ clientId: "1", socketPaths: () => [path], minGapMs: 10, baseBackoffMs: 40, maxBackoffMs: 80 });
+  client.start();
+  client.set({ details: "hello late discord" });
+  await sleep(200);
+  assert.equal(client.status().connected, false);
+  // Discord comes up after the daemon
+  const activities: unknown[] = [];
+  const server = createServer((sock) => {
+    let buf = Buffer.alloc(0);
+    sock.on("data", (d: Buffer) => {
+      buf = Buffer.concat([buf, d]);
+      while (buf.length >= 8) {
+        const op = buf.readUInt32LE(0);
+        const len = buf.readUInt32LE(4);
+        if (buf.length < 8 + len) break;
+        const msg = JSON.parse(buf.subarray(8, 8 + len).toString());
+        buf = buf.subarray(8 + len);
+        if (op === 0) sock.write(frame(1, { cmd: "DISPATCH", evt: "READY", data: { user: { id: "1", username: "late" } } }));
+        if (op === 1) {
+          activities.push(msg.args.activity);
+          sock.write(frame(1, { cmd: msg.cmd, data: {}, nonce: msg.nonce }));
+        }
+      }
+    });
+    sock.on("error", () => {});
+  });
+  await new Promise<void>((r) => server.listen(path, r));
+  await sleep(300);
+  assert.ok(client.status().connected, "connected once Discord appeared");
+  assert.deepEqual(activities[0], { details: "hello late discord" });
+  await client.stop();
+  await new Promise<void>((r) => server.close(() => r()));
+});

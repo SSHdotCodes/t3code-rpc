@@ -129,6 +129,8 @@ export class PresenceClient {
                 this.#ipc = null;
                 ipc.close("connect failed");
             }
+            // The close handler ignores this (already detached) connection, so retry from here.
+            this.#scheduleReconnect();
         }
     }
     #scheduleReconnect() {
