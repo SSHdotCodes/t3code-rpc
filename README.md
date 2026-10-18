@@ -34,7 +34,7 @@ The second line rotates between the agents and your token total (`⚡ 4.12B toke
 
 ## Install
 
-Requires Node.js 22.18+, the Discord desktop app and T3 Code.
+Requires Node.js 22.18+, the Discord desktop app and T3 Code. Works with base T3 Code (stable, Nightly or the `t3` CLI server) and forks such as SSHCode. It watches `~/.t3`, `$T3CODE_HOME` and any `~/.t3-*` data folder, and follows whichever one is running.
 
 ```sh
 npm install -g https://github.com/SSHdotCodes/t3code-rpc/tarball/main

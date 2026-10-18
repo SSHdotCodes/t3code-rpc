@@ -11,7 +11,7 @@ import { resolveT3Paths } from "../src/t3/paths.ts";
 import { driverResolver, StateReader } from "../src/t3/state.ts";
 
 const { DatabaseSync } = await import("node:sqlite");
-const schema = readFileSync(new URL("./fixtures/schema.sql", import.meta.url), "utf8");
+const schema = readFileSync(new URL(`./fixtures/${process.env.T3RPC_SCHEMA ?? "schema.sql"}`, import.meta.url), "utf8");
 const now = Date.parse("2026-10-17T23:00:00.000Z");
 const iso = (at = now) => new Date(at).toISOString();
 const secret = "PRIVATE CHAT TITLE / prompt / /private/worktree/file.txt";

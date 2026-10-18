@@ -15,7 +15,7 @@
     "build": "rm -rf dist && tsc -p .",
     "assets": "node scripts/build-assets.ts",
     "preview": "node scripts/preview.ts",
-    "test": "node --test test/*.test.ts",
+    "test": "node --test test/*.test.ts && T3RPC_SCHEMA=schema-upstream.sql node --test test/state.test.ts test/usage.test.ts",
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {},

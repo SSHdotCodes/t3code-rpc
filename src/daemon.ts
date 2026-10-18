@@ -1,6 +1,9 @@
 // The daemon loop: watch T3 Code, decide what to show, keep Discord in sync.
 
+import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { DynamicArt } from "./art/dynamic.ts";
 import { type Config, rpcHome } from "./config.ts";
 import type { DiscordActivity } from "./discord/activity.ts";
@@ -50,8 +53,28 @@ export interface Frame {
 }
 
 /** Everything the daemon knows at one instant. Used by the daemon and by `status`/`preview`. */
+/**
+ * T3 Code homes worth watching: an explicit config/env home wins; otherwise
+ * ~/.t3 (default for SSHCode, T3 Code stable and nightly) plus any ~/.t3-*
+ * folder that has a server runtime record (custom --base-dir installs).
+ */
+export function candidateHomes(explicit: string | null): string[] {
+  if (explicit) return [explicit];
+  const homes = [process.env.T3CODE_HOME?.trim(), join(homedir(), ".t3")].filter((h): h is string => !!h);
+  try {
+    for (const entry of readdirSync(homedir())) {
+      if (!entry.startsWith(".t3-")) continue;
+      const dir = join(homedir(), entry);
+      if (existsSync(join(dir, "userdata", "server-runtime.json"))) homes.push(dir);
+    }
+  } catch {
+    /* unreadable home dir */
+  }
+  return [...new Set(homes)];
+}
+
 export class Observer {
-  readonly paths: T3Paths;
+  #paths: T3Paths;
   readonly director = new Director();
   #db: T3Database | null = null;
   #reader: StateReader | null = null;
@@ -67,7 +90,7 @@ export class Observer {
   constructor(cfg: Config, log: Logger, opts: { dynamic?: boolean } = {}) {
     this.cfg = cfg;
     this.log = log;
-    this.paths = resolveT3Paths({ home: cfg.t3Home ?? undefined });
+    this.#paths = resolveT3Paths({ home: candidateHomes(cfg.t3Home)[0] });
     const d = cfg.art.dynamic;
     this.dynamic =
       opts.dynamic !== false && d.enabled
@@ -75,10 +98,33 @@ export class Observer {
         : null;
   }
 
+  get paths(): T3Paths {
+    return this.#paths;
+  }
+
   async app(now = Date.now()): Promise<AppStatus> {
     if (now - this.#appAt >= APP_CHECK_MS) {
       this.#appAt = now;
-      this.#app = await detectApp({ paths: this.paths });
+      // Follow whichever T3 Code home is running (current one first, so we don't flap).
+      const homes = candidateHomes(this.cfg.t3Home);
+      const ordered = [this.#paths.home, ...homes.filter((h) => h !== this.#paths.home)];
+      let found: { paths: T3Paths; app: AppStatus } | null = null;
+      for (const home of ordered) {
+        const paths = resolveT3Paths({ home });
+        const app = await detectApp({ paths });
+        if (app.running) {
+          found = { paths, app };
+          break;
+        }
+        if (home === this.#paths.home) this.#app = app;
+      }
+      if (found && found.paths.home !== this.#paths.home) {
+        this.log.info(`following T3 Code at ${found.paths.home}`);
+        this.closeDb();
+        this.#usage = null;
+        this.#paths = found.paths;
+      }
+      if (found) this.#app = found.app;
       if (this.#app.running) {
         try {
           const rec = JSON.parse(await readFile(this.paths.runtimePath, "utf8"));

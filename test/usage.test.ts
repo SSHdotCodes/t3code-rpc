@@ -7,7 +7,7 @@ import { T3Database } from "../src/t3/db.ts";
 import { readUsage } from "../src/t3/usage.ts";
 
 const { DatabaseSync } = await import("node:sqlite");
-const schema = readFileSync(new URL("./fixtures/schema.sql", import.meta.url), "utf8");
+const schema = readFileSync(new URL(`./fixtures/${process.env.T3RPC_SCHEMA ?? "schema.sql"}`, import.meta.url), "utf8");
 const now = Date.parse("2026-10-17T23:00:00.000Z");
 const dayMs = 86_400_000;
 
