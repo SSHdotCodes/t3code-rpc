@@ -89,7 +89,10 @@ export interface TokenTotals {
   reasoning: number;
   /** input + output. */
   total: number;
+  /** Number of usage records (turns / assistant messages). */
   turns: number;
+  /** Distinct sessions, when the source knows them. */
+  sessions?: number;
 }
 
 export interface UsageSummary {
@@ -99,6 +102,8 @@ export interface UsageSummary {
   /** Per provider driver. */
   byDriver: Record<string, TokenTotals>;
   computedAt: number;
+  /** t3-usage = T3 Code's Usage page (all local agent sessions); t3-turns = turns run inside T3 only. */
+  source?: "t3-usage" | "t3-turns";
 }
 
 export interface AppStatus {

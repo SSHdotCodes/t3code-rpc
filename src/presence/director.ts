@@ -90,7 +90,8 @@ function tokenHover(usage: UsageSummary | null): string | null {
   if (!usage) return null;
   const t = usage.totals;
   const hit = t.input > 0 ? Math.round((t.cachedInput / t.input) * 100) : 0;
-  return `${formatTokens(t.total)} tokens ${windowLabel(usage.windowDays)} · ${formatTokens(t.output)} out · ${hit}% cached · ${plural(t.turns, "turn")}`;
+  const count = t.sessions !== undefined ? plural(t.sessions, "session") : plural(t.turns, "turn");
+  return `${formatTokens(t.total)} tokens ${windowLabel(usage.windowDays)} · ${formatTokens(t.output)} out · ${hit}% cached · ${count}`;
 }
 
 export class Director {

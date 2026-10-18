@@ -11,7 +11,7 @@ export const DEFAULT_CONFIG = {
     appName: "T3 Code",
     activityType: 0,
     statusDisplay: "name",
-    tokens: { show: true, windowDays: 30, metric: "total" },
+    tokens: { show: true, windowDays: 30, metric: "total", source: "t3-usage" },
     showModel: true,
     showProject: false,
     showElapsed: true,

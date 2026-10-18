@@ -14,7 +14,6 @@ import { formatTokens, windowLabel } from "./presence/format.js";
 import { CHARACTER_KINDS } from "./render/characters.js";
 import { ACTIVITY_SCENES } from "./render/scenes.js";
 import { T3Database } from "./t3/db.js";
-import { readUsage } from "./t3/usage.js";
 const run = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -312,18 +311,24 @@ async function demo(scene, as, withList, seconds) {
 async function usage(days) {
     const cfg = loadConfig();
     const obs = new Observer(cfg, makeLogger(), { dynamic: false });
-    const db = new T3Database(obs.paths.dbPath);
     try {
-        const u = readUsage(db, { windowDays: days ?? cfg.tokens.windowDays });
-        const row = (name, t) => `${name.padEnd(14)} ${formatTokens(t.total).padStart(8)} total  ${formatTokens(t.input).padStart(8)} in (${formatTokens(t.cachedInput)} cached)  ${formatTokens(t.output).padStart(7)} out  ${String(t.turns).padStart(5)} turns`;
-        console.log(`T3 Code token usage, ${windowLabel(u.windowDays)}\n`);
+        await obs.app();
+        const u = await obs.usage(Date.now(), days ?? cfg.tokens.windowDays);
+        if (!u)
+            return console.log("No usage data found.");
+        const unit = (t) => (t.sessions !== undefined ? `${String(t.sessions).padStart(5)} sessions` : `${String(t.turns).padStart(5)} turns`);
+        const row = (name, t) => `${name.padEnd(14)} ${formatTokens(t.total).padStart(8)} total  ${formatTokens(t.input).padStart(8)} in (${formatTokens(t.cachedInput)} cached)  ${formatTokens(t.output).padStart(7)} out  ${unit(t)}`;
+        const from = u.source === "t3-usage" ? "same as T3 Code's Usage page" : "turns run inside T3 Code";
+        console.log(`Token usage, ${windowLabel(u.windowDays)} (${from})\n`);
         for (const [driver, t] of Object.entries(u.byDriver).sort((a, b) => b[1].total - a[1].total))
             console.log(row(driver, t));
-        console.log("-".repeat(80));
+        console.log("-".repeat(84));
         console.log(row("all", u.totals));
+        if ("cacheUpdatedAt" in u)
+            console.log(`\nT3 last rescanned transcripts at ${new Date(u.cacheUpdatedAt).toLocaleString()}.`);
     }
     finally {
-        db.close();
+        obs.closeDb();
     }
 }
 async function doctor() {

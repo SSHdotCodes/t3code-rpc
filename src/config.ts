@@ -29,6 +29,11 @@ export interface Config {
     windowDays: number;
     /** total = input (incl. cache) + output; fresh = total minus cache reads; output = output only. */
     metric: "total" | "fresh" | "output";
+    /**
+     * t3-usage: the same numbers as T3 Code's Usage page (every local Claude Code, Codex, Grok,
+     * Pi and OpenCode session). t3-turns: only turns that ran inside T3 Code.
+     */
+    source: "t3-usage" | "t3-turns";
   };
   showModel: boolean;
   /** Show the project folder name (never chat names). Off by default. */
@@ -69,7 +74,7 @@ export const DEFAULT_CONFIG: Config = {
   appName: "T3 Code",
   activityType: 0,
   statusDisplay: "name",
-  tokens: { show: true, windowDays: 30, metric: "total" },
+  tokens: { show: true, windowDays: 30, metric: "total", source: "t3-usage" },
   showModel: true,
   showProject: false,
   showElapsed: true,

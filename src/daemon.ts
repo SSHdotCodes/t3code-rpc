@@ -16,6 +16,7 @@ import { type Instances, readInstances } from "./t3/instances.ts";
 import { resolveT3Paths, type T3Paths } from "./t3/paths.ts";
 import { StateReader } from "./t3/state.ts";
 import { readUsage } from "./t3/usage.ts";
+import { readUsagePage } from "./t3/usagePage.ts";
 import type { AppStatus, T3Snapshot, UsageSummary } from "./types.ts";
 
 export interface Logger {
@@ -155,6 +156,20 @@ export class Observer {
     return this.#reader;
   }
 
+  /** Token usage from the configured source, falling back to T3's per-turn records. */
+  async usage(now = Date.now(), windowDays = this.cfg.tokens.windowDays): Promise<UsageSummary | null> {
+    if (this.cfg.tokens.source === "t3-usage") {
+      try {
+        const page = await readUsagePage(this.paths.userdataDir, { windowDays, now });
+        if (page) return page;
+      } catch (err) {
+        this.log.warn(`usage page read failed: ${(err as Error).message}`);
+      }
+    }
+    if (!this.#db) this.#ensureReader();
+    return this.#db ? { ...readUsage(this.#db, { windowDays, now }), source: "t3-turns" } : null;
+  }
+
   closeDb(): void {
     this.#reader = null;
     this.#db?.close();
@@ -172,9 +187,9 @@ export class Observer {
       try {
         const reader = this.#ensureReader();
         snapshot = reader ? reader.read(now) : null;
-        if (this.#db && (now - this.#usageAt >= USAGE_REFRESH_MS || !this.#usage)) {
+        if (now - this.#usageAt >= USAGE_REFRESH_MS || !this.#usage) {
           this.#usageAt = now;
-          this.#usage = readUsage(this.#db, { windowDays: this.cfg.tokens.windowDays, now });
+          this.#usage = (await this.usage(now)) ?? this.#usage;
         }
       } catch (err) {
         this.log.warn(`state read failed: ${(err as Error).message}`);
