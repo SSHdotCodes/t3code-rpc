@@ -57,6 +57,7 @@ export class PresenceClient {
   #lastError: string | null = null;
   #stopped = false;
   #started = false;
+  #announcedWaiting = false;
 
   constructor(opts: PresenceClientOptions) {
     this.#o = {
@@ -66,7 +67,7 @@ export class PresenceClient {
       maxWritesPerWindow: opts.maxWritesPerWindow ?? 4,
       reassertMs: opts.reassertMs ?? 60_000,
       baseBackoffMs: opts.baseBackoffMs ?? 5000,
-      maxBackoffMs: opts.maxBackoffMs ?? 300_000,
+      maxBackoffMs: opts.maxBackoffMs ?? 60_000,
     };
     this.#log = opts.logger ?? quiet;
     this.#factory = opts.ipcFactory ?? ((o) => new DiscordIpc(o));
@@ -126,7 +127,10 @@ export class PresenceClient {
       const wasConnected = this.#connected;
       this.#connected = false;
       this.#ipc = null;
-      if (wasConnected && !this.#stopped) this.#log.warn(`discord: disconnected (${reason})`);
+      if (wasConnected && !this.#stopped) {
+        this.#log.warn(`discord: disconnected (${reason})`);
+        this.#backoff = this.#o.baseBackoffMs;
+      }
       this.#scheduleReconnect();
     });
     try {
@@ -139,12 +143,17 @@ export class PresenceClient {
       this.#user = user;
       this.#lastError = null;
       this.#backoff = this.#o.baseBackoffMs;
+      this.#announcedWaiting = false;
       // A fresh connection shows nothing until we set something.
       this.#appliedKey = "null";
       this.#log.info(`discord: connected${user ? ` as ${user.username}` : ""}`);
       this.#schedule(0);
     } catch (err) {
       this.#lastError = (err as Error).message;
+      if (!this.#announcedWaiting) {
+        this.#log.info("discord: waiting for the Discord app (will keep retrying)");
+        this.#announcedWaiting = true;
+      }
       this.#log.debug(`discord: connect failed: ${this.#lastError}`);
       if (this.#ipc === ipc) {
         this.#ipc = null;
