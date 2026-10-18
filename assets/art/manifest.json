@@ -1,0 +1,41 @@
+{
+  "generatedAt": "2026-10-17T23:50:58.003Z",
+  "size": 320,
+  "orbitFallbackSize": 256,
+  "scenes": [
+    "idle",
+    "thinking",
+    "coding",
+    "terminal",
+    "reading",
+    "web",
+    "waiting",
+    "done",
+    "error"
+  ],
+  "characters": [
+    "t3",
+    "claude",
+    "codex",
+    "grok",
+    "gemini",
+    "cursor",
+    "opencode",
+    "muse",
+    "mistral",
+    "pi",
+    "antigravity",
+    "generic"
+  ],
+  "orbitFallbackMax": 6,
+  "orbitFallbackConductors": [
+    "t3",
+    "claude",
+    "codex"
+  ],
+  "orbitFallbackHelpers": [
+    "claude",
+    "codex",
+    "grok"
+  ]
+}

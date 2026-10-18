@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<!-- Codex app mark, redrawn as vector -->
+<defs>
+<linearGradient id="cx-g" x1="110" y1="90" x2="420" y2="430" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#a9a8f8"/><stop offset="0.55" stop-color="#8584f1"/><stop offset="1" stop-color="#6463ea"/></linearGradient>
+<radialGradient id="cx-h" cx="170" cy="170" r="190" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
+</defs>
+<g fill="url(#cx-g)"><circle cx="256" cy="256" r="150"/><circle cx="370.6" cy="303.5" r="72"/><circle cx="303.5" cy="370.6" r="72"/><circle cx="208.5" cy="370.6" r="72"/><circle cx="141.4" cy="303.5" r="72"/><circle cx="141.4" cy="208.5" r="72"/><circle cx="208.5" cy="141.4" r="72"/><circle cx="303.5" cy="141.4" r="72"/><circle cx="370.6" cy="208.5" r="72"/></g>
+<g fill="url(#cx-h)"><circle cx="256" cy="256" r="150"/><circle cx="370.6" cy="303.5" r="72"/><circle cx="303.5" cy="370.6" r="72"/><circle cx="208.5" cy="370.6" r="72"/><circle cx="141.4" cy="303.5" r="72"/><circle cx="141.4" cy="208.5" r="72"/><circle cx="208.5" cy="141.4" r="72"/><circle cx="303.5" cy="141.4" r="72"/><circle cx="370.6" cy="208.5" r="72"/></g>
+<path d="M183 207L237 252L183 297" fill="none" stroke="#ffffff" stroke-width="23" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M265 299H322" fill="none" stroke="#ffffff" stroke-width="23" stroke-linecap="round"/>
+</svg>

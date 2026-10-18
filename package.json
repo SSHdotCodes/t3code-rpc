@@ -1,0 +1,50 @@
+{
+  "name": "t3code-rpc",
+  "version": "0.1.0",
+  "description": "Discord Rich Presence for T3 Code with cute animated status art and token usage",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "t3code-rpc": "./bin/t3code-rpc.js"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/cli.ts run",
+    "build": "rm -rf dist && tsc -p .",
+    "assets": "node scripts/build-assets.ts",
+    "preview": "node scripts/preview.ts",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {},
+  "optionalDependencies": {
+    "@resvg/resvg-js": "^2.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "src",
+    "assets",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SSHdotCodes/t3code-rpc.git"
+  },
+  "keywords": [
+    "t3code",
+    "discord",
+    "rich-presence",
+    "rpc",
+    "codex",
+    "claude"
+  ]
+}
