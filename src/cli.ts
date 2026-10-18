@@ -235,8 +235,9 @@ async function status(): Promise<void> {
   console.log(`daemon:   ${pid ? `running (pid ${pid})` : "not running"}${serviceInstalled() ? " · login service installed" : ""}`);
   console.log(`T3 Code:  ${f.app.running ? `open (server ${f.app.serverVersion ?? "?"}, port ${f.app.port})` : "closed"}`);
   if (f.snapshot) {
-    const kids = f.snapshot.threads.reduce((n, t) => n + t.children.filter((c) => c.state !== "outstanding").length, 0);
-    console.log(`activity: ${f.snapshot.threads.length} active thread(s), ${kids} active subagent(s)`);
+    const kids = f.snapshot.threads.reduce((n, t) => n + t.children.length, 0);
+    const busy = f.snapshot.threads.reduce((n, t) => n + t.children.filter((c) => c.state !== "outstanding").length, 0);
+    console.log(`activity: ${f.snapshot.threads.length} active thread(s), ${kids} subagent(s) pending (${busy} working right now)`);
   }
   if (f.usage) console.log(`tokens:   ${formatTokens(f.usage.totals.total)} (${windowLabel(f.usage.windowDays)}, ${f.usage.totals.turns} turns)`);
   console.log(`\nDiscord would show (${f.decision?.mood ?? "nothing"}):\n${describe(f.activity)}`);

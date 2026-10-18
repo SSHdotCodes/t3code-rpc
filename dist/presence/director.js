@@ -17,7 +17,26 @@ const ACTIVITY = {
     question: { scene: "waiting", details: "❓ Waiting for an answer", verb: "has a question" },
     working: { scene: "coding", details: "🛠️ Working", verb: "is working" },
 };
-const liveChildren = (t) => t.children.filter((c) => c.state !== "outstanding");
+/**
+ * Every subagent T3 is still waiting on — executing, queued, or finished but not yet
+ * reported back. This matches T3's own "Waiting on N subagents" count.
+ */
+const liveChildren = (t) => t.children;
+const working = (cs) => cs.filter((c) => c.state !== "outstanding").length;
+function backgroundNote(threads) {
+    const sum = { monitors: 0, commands: 0, tasks: 0 };
+    for (const t of threads) {
+        sum.monitors += t.background?.monitors ?? 0;
+        sum.commands += t.background?.commands ?? 0;
+        sum.tasks += t.background?.tasks ?? 0;
+    }
+    const parts = [
+        sum.monitors ? plural(sum.monitors, "monitor") : "",
+        sum.commands ? plural(sum.commands, "command") : "",
+        sum.tasks ? plural(sum.tasks, "background task") : "",
+    ].filter(Boolean);
+    return parts.length ? parts.join(" · ") : null;
+}
 export function tokenLine(cfg, usage) {
     if (!cfg.tokens.show || !usage)
         return null;
@@ -91,13 +110,18 @@ export class Director {
         const team = breakdown(orbitAgents, names);
         const lead = conductorThread ? label(conductorThread.agent) : null;
         const details = conductorThread ? `🪄 Orchestrating ${plural(count, "agent")}` : `🪄 Running ${count} agents at once`;
-        const extras = [otherAgents ? `+${plural(otherAgents, "more agent")}` : "", waiting ? `${waiting} waiting on me` : ""].filter(Boolean);
+        const extras = [
+            otherAgents ? `+${plural(otherAgents, "more agent")}` : "",
+            backgroundNote(conductorThread ? [conductorThread] : threads) ?? "",
+            waiting ? `${waiting} waiting on me` : "",
+        ].filter(Boolean);
+        const busy = conductorThread ? working(liveChildren(conductorThread)) : null;
         const teamLine = withProject(lead ? `${lead} → ${team}` : team) + extras.map((e) => ` · ${e}`).join("");
         return {
             art: { kind: "orbit", conductor, orbiters: orbitAgents.map((a) => characterFor(a, names)), count },
             details,
             stateLines: [teamLine, ...(tokens ? [tokens] : [])],
-            largeText: lead ? `${lead} conducting ${team}` : `T3 Code juggling ${team}`,
+            largeText: lead ? `${lead} conducting ${team}${busy !== null && busy < count ? ` · ${busy} working right now` : ""}` : `T3 Code juggling ${team}`,
             badge: conductorThread ? conductor : "t3",
             smallText: hover ?? (lead ?? "T3 Code"),
             startedAt: busySince,

@@ -80,7 +80,7 @@ test("folds two Codex children and a Grok grandchild into their Claude parent; d
   f.subagent("one-duplicate", "parent", "child-one");
   f.subagent("two", "parent", "child-two");
   f.subagent("grand", "child-one", "grandchild", { instance: "grok_grok_build" });
-  f.subagent("stale", "parent", "inactive", { at: now - 7 * 60 * 60 * 1000 });
+  f.subagent("stale", "parent", "inactive", { at: now - 49 * 60 * 60 * 1000 });
   const snapshot = new StateReader(f.db).read(now);
   assert.equal(snapshot.threads.length, 1);
   const parent = snapshot.threads[0]!;

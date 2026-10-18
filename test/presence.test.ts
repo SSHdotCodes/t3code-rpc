@@ -81,7 +81,7 @@ test("single agent shows its activity", () => {
   assert.equal(d.startedAt, 1000);
 });
 
-test("orchestration counts live subagents and keeps the conductor", () => {
+test("orchestration counts every subagent T3 is waiting on and keeps the conductor", () => {
   const parent = thread(claude, "tool", [
     { key: "a", origin: "app_owned", agent: codex, state: "executing" },
     { key: "b", origin: "app_owned", agent: codex, state: "waiting" },
@@ -92,10 +92,17 @@ test("orchestration counts live subagents and keeps the conductor", () => {
   assert.equal(d.art.kind, "orbit");
   if (d.art.kind !== "orbit") return;
   assert.equal(d.art.conductor, "claude");
-  assert.equal(d.art.count, 3);
-  assert.deepEqual(d.art.orbiters.sort(), ["codex", "codex", "grok"]);
-  assert.equal(d.details, "🪄 Orchestrating 3 agents");
-  assert.equal(d.stateLines[0], "Claude Opus 5.5 → 2 Codex · 1 Grok");
+  assert.equal(d.art.count, 4);
+  assert.deepEqual(d.art.orbiters.sort(), ["codex", "codex", "codex", "grok"]);
+  assert.equal(d.details, "🪄 Orchestrating 4 agents");
+  assert.equal(d.stateLines[0], "Claude Opus 5.5 → 3 Codex · 1 Grok");
+  assert.match(d.largeText, /3 working right now/);
+});
+
+test("monitors and background commands are mentioned like T3 does", () => {
+  const parent = { ...thread(claude, "working", [{ key: "a", origin: "app_owned" as const, agent: codex, state: "outstanding" as const }]), background: { monitors: 3, commands: 0, tasks: 0 } };
+  const d = new Director().decide({ cfg, app, snapshot: snap([parent]), usage })!;
+  assert.equal(d.stateLines[0], "Claude Opus 5.5 → 1 Codex · 3 monitors");
 });
 
 test("other threads don't inflate the conductor's subagent count", () => {

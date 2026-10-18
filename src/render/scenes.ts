@@ -237,7 +237,7 @@ function orbit(kind: CharacterKind, t: number, orbiters: Orbiter[], count: numbe
   const cy = 172;
   const rx = 104;
   const ry = 32;
-  const mini = N <= 2 ? 46 : N <= 4 ? 40 : N <= 6 ? 35 : N <= 8 ? 31 : N <= 10 ? 27 : 24;
+  const mini = N <= 2 ? 46 : N <= 4 ? 40 : N <= 6 ? 35 : N <= 8 ? 31 : N <= 10 ? 27 : N <= 12 ? 24 : 21;
   const s = 0.72;
   const liftAt = (tt: number) => 40 + 4 * wave(tt, 2);
   const at = { x: 128, y: FEET - liftAt(t), scale: s };

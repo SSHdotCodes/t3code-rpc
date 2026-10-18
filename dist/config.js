@@ -28,7 +28,7 @@ export const DEFAULT_CONFIG = {
     art: {
         baseUrl: `https://raw.githubusercontent.com/${REPO}/main/assets/art`,
         version: "1",
-        dynamic: { enabled: false, githubRepo: REPO, branch: "art-cache", maxOrbiters: 12 },
+        dynamic: { enabled: false, githubRepo: REPO, branch: "art-cache", maxOrbiters: 16 },
     },
     t3Home: null,
 };

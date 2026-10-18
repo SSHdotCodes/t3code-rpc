@@ -192,6 +192,15 @@ function activity(row: RunRow, requests: RequestRow[], items: ItemRow[]): Activi
   return priorities.find((kind) => seen.has(kind)) ?? (["preparing", "starting"].includes(row.run_status) ? "starting" : "working");
 }
 
+/** Provider-reported background work for a thread (same source as T3's "Waiting on … monitors"). */
+const backgroundTasksQuery = `SELECT json_extract(t.value, '$.kind') AS kind, json_extract(t.value, '$.taskId') AS task_id
+  FROM orchestration_v2_projection_provider_threads p, json_each(p.payload_json, '$.pendingBackgroundTasks') t
+  WHERE p.thread_id = ? LIMIT 256`;
+/** Background commands still open once the run settled (uses the partial recovery index). */
+const settledCommandsQuery = `SELECT count(*) AS n FROM orchestration_v2_projection_turn_items
+  WHERE thread_id = ? AND type IN ('command_execution', 'dynamic_tool', 'subagent')
+    AND status IN ('pending', 'running', 'waiting') AND type = 'command_execution'`;
+
 export class StateReader {
   readonly db: T3Database;
   readonly includeProjectNames: boolean;
@@ -207,7 +216,7 @@ export class StateReader {
   constructor(db: T3Database, opts: { includeProjectNames?: boolean; outstandingMaxAgeMs?: number } = {}) {
     this.db = db;
     this.includeProjectNames = opts.includeProjectNames ?? false;
-    this.outstandingMaxAgeMs = opts.outstandingMaxAgeMs ?? 6 * 60 * 60 * 1000;
+    this.outstandingMaxAgeMs = opts.outstandingMaxAgeMs ?? 48 * 60 * 60 * 1000;
   }
 
   read(now = Date.now()): T3Snapshot {
@@ -358,10 +367,21 @@ export class StateReader {
         for (const [id, row] of candidates) {
           if (folded.has(id)) continue;
           const items = row.run_id ? this.db.all<ItemRow>(itemsQuery, row.run_id, id) : [];
+          const background = { monitors: 0, commands: 0, tasks: 0 };
+          const seenTasks = new Set<string>();
+          for (const task of this.db.all<{ kind: string | null; task_id: string | null }>(backgroundTasksQuery, id)) {
+            if (task.task_id && seenTasks.has(task.task_id)) continue;
+            if (task.task_id) seenTasks.add(task.task_id);
+            if (task.kind === "monitor") background.monitors++;
+            else if (task.kind === "command") background.commands++;
+            else if (task.kind === "background_task") background.tasks++;
+          }
+          const settled = row.run_id === null || !["preparing", "starting", "running"].includes(row.run_status);
+          if (settled) background.commands += this.db.get<{ n: number }>(settledCommandsQuery, id)?.n ?? 0;
           threads.push({ threadId: id, runStatus: row.run_status as ActiveThread["runStatus"], agent: agent(row),
             startedAt: epoch(row.work_started_at), activity: activity(row, pending(id), items),
             children: (allChildren.get(id) ?? []).map(({ key, origin, agent, state }) => ({ key, origin, agent, state })),
-            projectName: this.includeProjectNames ? row.project_name : null });
+            projectName: this.includeProjectNames ? row.project_name : null, background });
         }
 
         const delegatedWhileParentActive = (row: RunRow) => [...parentsOf(row.thread_id, row)]

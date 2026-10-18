@@ -51,6 +51,14 @@ export interface ActiveThread {
   children: ChildAgent[];
   /** Project folder basename; only populated when `includeProjectNames` is set. */
   projectName: string | null;
+  /** Non-subagent background work T3 is waiting on (provider monitors, background commands/tasks). */
+  background?: BackgroundCounts;
+}
+
+export interface BackgroundCounts {
+  monitors: number;
+  commands: number;
+  tasks: number;
 }
 
 export interface RunOutcome {
