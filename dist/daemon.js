@@ -23,6 +23,11 @@ export function makeLogger(debug = !!process.env.T3CODE_RPC_DEBUG) {
 const APP_CHECK_MS = 3000;
 const USAGE_REFRESH_MS = 60_000;
 const CLOSED_GRACE_MS = 8000;
+/** A new scene must hold this long before it replaces the current one… */
+const SETTLE_MS = 2000;
+/** …and a scene stays up at least this long, so quick tool hops don't flicker the art. */
+const DWELL_MS = 6000;
+const URGENT = /approval|question|^done$|^error$|^idle$/;
 /** Everything the daemon knows at one instant. Used by the daemon and by `status`/`preview`. */
 export class Observer {
     paths;
@@ -126,6 +131,10 @@ export class Daemon {
     #closedSince = null;
     #lastMood = "";
     #ticking = false;
+    #shownMood = "";
+    #shownAt = 0;
+    #candidate = "";
+    #candidateSince = 0;
     constructor(cfg, log) {
         this.log = log;
         this.observer = new Observer(cfg, log);
@@ -148,14 +157,28 @@ export class Daemon {
             if (!f.app.running) {
                 this.#closedSince ??= now;
                 this.observer.closeDb();
-                if (this.observer.cfg.clearWhenClosed && now - this.#closedSince >= CLOSED_GRACE_MS)
+                if (this.observer.cfg.clearWhenClosed && now - this.#closedSince >= CLOSED_GRACE_MS) {
                     this.presence.set(null);
+                    this.#shownMood = "";
+                }
                 this.#logMood("closed");
                 return;
             }
             this.#closedSince = null;
+            const mood = f.decision?.mood ?? "hidden";
+            if (mood !== this.#shownMood) {
+                if (mood !== this.#candidate) {
+                    this.#candidate = mood;
+                    this.#candidateSince = now;
+                }
+                const settled = now - this.#candidateSince >= SETTLE_MS && now - this.#shownAt >= DWELL_MS;
+                if (!settled && !URGENT.test(mood) && this.#shownMood !== "")
+                    return;
+                this.#shownMood = mood;
+                this.#shownAt = now;
+            }
             this.presence.set(f.activity);
-            this.#logMood(f.decision?.mood ?? "hidden");
+            this.#logMood(mood);
         }
         catch (err) {
             this.log.error(`tick failed: ${err.stack ?? err}`);

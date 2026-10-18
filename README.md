@@ -37,7 +37,7 @@ The second line rotates between the agents and your token total (`⚡ 4.12B toke
 Requires Node.js 22.18+, the Discord desktop app and T3 Code.
 
 ```sh
-npm install -g github:SSHdotCodes/t3code-rpc
+npm install -g https://github.com/SSHdotCodes/t3code-rpc/tarball/main
 t3code-rpc install    # start at login (launchd / systemd / Startup folder)
 t3code-rpc doctor     # check Discord, T3 Code and art hosting
 ```

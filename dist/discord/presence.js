@@ -95,7 +95,7 @@ export class PresenceClient {
             const wasConnected = this.#connected;
             this.#connected = false;
             this.#ipc = null;
-            if (wasConnected)
+            if (wasConnected && !this.#stopped)
                 this.#log.warn(`discord: disconnected (${reason})`);
             this.#scheduleReconnect();
         });
