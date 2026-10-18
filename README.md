@@ -79,7 +79,7 @@ t3code-rpc config set art.dynamic.githubRepo you/your-public-repo
 ## How it works
 
 - **State:** T3 Code keeps its state in `~/.t3/userdata/statev2.sqlite`. The daemon opens it **read-only** and polls a handful of indexed queries every second (about 5 ms): active runs, live turn items, pending approvals, and subagent and delegated-child relationships. Liveness comes from the server's runtime record plus its public `/.well-known/t3/environment` probe.
-- **Tokens:** the same "processed tokens" as T3 Code's Usage page. That's T3's transcript scan cache (`usage-scan-cache-v5.json`) plus OpenCode's own databases, de-duplicated and windowed by local calendar day. If T3 hasn't written that cache yet, it falls back to T3's per-turn accounting.
+- **Tokens:** the same "processed tokens" as T3 Code's Usage page. T3's transcript scan cache (`usage-scan-cache-v5.json`) seeds a live incremental scan of its recorded Claude, Codex, Grok and Pi directories, plus OpenCode's own databases, de-duplicated and windowed by local calendar day. Usage refreshes every 60 seconds without needing to reopen T3's Usage page. Only usage metadata is retained. If T3 hasn't written that cache yet, it falls back to T3's per-turn accounting.
 - **Discord:** a small built-in IPC client with no dependencies. It dedupes payloads, caps writes at 4 per 20 s with a minimum gap, and reconnects with jittered backoff.
 - **Art:** every frame is drawn as SVG (`src/render`), rasterized with resvg and encoded with ffmpeg using a shared palette. `npm run assets` re-renders the whole pack in about 15 s; `npm run preview` renders contact sheets.
 

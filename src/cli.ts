@@ -238,7 +238,10 @@ async function status(): Promise<void> {
     const busy = f.snapshot.threads.reduce((n, t) => n + t.children.filter((c) => c.state !== "outstanding").length, 0);
     console.log(`activity: ${f.snapshot.threads.length} active thread(s), ${kids} subagent(s) pending (${busy} working right now)`);
   }
-  if (f.usage) console.log(`tokens:   ${formatTokens(f.usage.totals.total)} (${windowLabel(f.usage.windowDays)}, ${f.usage.totals.turns} turns)`);
+  if (f.usage) {
+    const { sessions, turns } = f.usage.totals;
+    console.log(`tokens:   ${formatTokens(f.usage.totals.total)} (${windowLabel(f.usage.windowDays)}, ${sessions !== undefined ? `${sessions} sessions` : `${turns} turns`})`);
+  }
   console.log(`\nDiscord would show (${f.decision?.mood ?? "nothing"}):\n${describe(f.activity)}`);
   obs.closeDb();
 }

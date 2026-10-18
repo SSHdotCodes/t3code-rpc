@@ -33,7 +33,8 @@
     "assets",
     "scripts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "THIRD_PARTY_NOTICES"
   ],
   "repository": {
     "type": "git",
