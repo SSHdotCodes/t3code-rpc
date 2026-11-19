@@ -120,7 +120,20 @@ async function install() {
         const uid = process.getuid?.() ?? 501;
         await run("launchctl", ["bootout", `gui/${uid}/${LABEL}`]).catch(() => { });
         writeFileSync(plistPath(), plist);
-        await run("launchctl", ["bootstrap", `gui/${uid}`, plistPath()]);
+        let lastErr;
+        for (let attempt = 0; attempt < 6; attempt++) {
+            try {
+                await run("launchctl", ["bootstrap", `gui/${uid}`, plistPath()]);
+                lastErr = null;
+                break;
+            }
+            catch (err) {
+                lastErr = err;
+                await new Promise((r) => setTimeout(r, 300));
+            }
+        }
+        if (lastErr)
+            throw lastErr;
         console.log(`Installed ${plistPath()} — t3code-rpc now starts at login and is running.`);
     }
     else if (p === "linux") {
