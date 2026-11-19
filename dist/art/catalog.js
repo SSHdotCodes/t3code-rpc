@@ -1,23 +1,27 @@
-// Where each piece of art lives. The pre-rendered pack is committed under
-// assets/art and served from a public base URL (GitHub raw by default).
+// Where each piece of art lives. The pre-rendered pack is published to the
+// orphan `art` branch and served from a public base URL (GitHub raw by default).
 //
-//   art/<scene>/<character>.gif      activity loops (idle, thinking, …)
-//   art/orbit/<conductor>-<helper>-<n>.gif  orchestration fallbacks: a conductor with n helpers of
-//                                    one provider (n = 1..6, 6 means "6+"); exact mixed rings are
-//                                    rendered on demand (see dynamic.ts)
-//   art/badges/<character>.png       small-image provider badges
+//   <scene>/<character>.gif                activity loops (idle, thinking, …)
+//   orbit/<conductor>-<helper>-<n>.gif     orchestration fallbacks: a conductor with n helpers of
+//                                          one provider or "mixed" (n = 1..6, 6 means "6+"); exact
+//                                          mixed rings are rendered on demand (see dynamic.ts)
+//   badges/<character>.png                 small-image provider badges
 export const ORBIT_FALLBACK_MAX = 6;
 export const ORBIT_FALLBACK_CONDUCTORS = ["t3", "claude", "codex"];
 export const ORBIT_FALLBACK_HELPERS = ["claude", "codex", "grok"];
+export const ORBIT_MIXED_TEAM = ["claude", "codex", "grok", "gemini", "cursor", "opencode"];
 const join = (base, path) => `${base.replace(/\/+$/, "")}/${path}`;
 const versioned = (cfg, path) => `${join(cfg.baseUrl, path)}?v=${encodeURIComponent(cfg.version)}`;
 export const activityPath = (scene, kind) => `${scene}/${kind}.gif`;
 export const orbitFallbackPath = (conductor, helper, n) => `orbit/${conductor}-${helper}-${Math.max(1, Math.min(ORBIT_FALLBACK_MAX, n))}.gif`;
 export const badgePath = (kind) => `badges/${kind}.png`;
 export const activityUrl = (cfg, scene, kind) => versioned(cfg, activityPath(scene, kind));
-/** Closest pre-rendered ring: conductor and majority helper snapped to the fallback set. */
+/** Closest pre-rendered ring: mixed teams use the mixed fallback; single-provider teams snap to the fallback set. */
 export function orbitFallbackUrl(cfg, conductor, orbiters, count) {
     const c = ORBIT_FALLBACK_CONDUCTORS.includes(conductor) ? conductor : "t3";
+    if (count >= 2 && new Set(orbiters).size > 1) {
+        return versioned(cfg, orbitFallbackPath(c, "mixed", count));
+    }
     const tally = new Map();
     for (const o of orbiters)
         if (ORBIT_FALLBACK_HELPERS.includes(o))

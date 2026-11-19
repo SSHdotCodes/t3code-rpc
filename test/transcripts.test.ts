@@ -218,7 +218,7 @@ test("readUsagePage resumes the persisted cache, discovers new files, retains de
   await writeFile(newPath, line(record("claude", 4, 19)) + "\n");
   const before = [await readFile(path), await readFile(newPath)];
   const expected = [7, 11, 17, 19].reduce((sum, output) => sum + 125 + output, 0);
-  const opts = { windowDays: 30, now: Date.now() };
+  const opts = { windowDays: 30, now };
   const summary = (await readUsagePage(dir, opts))!;
   assert.equal(summary.byDriver.claude?.total, expected);
   assert.equal(summary.byDriver.claude?.sessions, 1);

@@ -14,6 +14,7 @@
     "start": "node src/cli.ts run",
     "build": "rm -rf dist && tsc -p .",
     "assets": "node scripts/build-assets.ts",
+    "assets:publish": "node scripts/publish-art.ts",
     "preview": "node scripts/preview.ts",
     "test": "node --test test/*.test.ts && T3RPC_SCHEMA=schema-upstream.sql node --test test/state.test.ts test/usage.test.ts",
     "typecheck": "tsc --noEmit -p ."
@@ -30,7 +31,7 @@
     "bin",
     "dist",
     "src",
-    "assets",
+    "assets/src/logos",
     "scripts",
     "README.md",
     "LICENSE",

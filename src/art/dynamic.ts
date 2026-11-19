@@ -72,15 +72,30 @@ export class DynamicArt {
     this.#onReady = fn;
   }
 
-  /** URL of the exact ring if it's published; otherwise schedules it and returns null. */
-  urlFor(conductor: CharacterKind, orbiters: Orbiter[], count: number): string | null {
+  #cacheKey(key: string): string {
+    return `${this.#opts.repo}@${this.#opts.branch}:${key}`;
+  }
+
+  /** Cached URL for an exact ring if already published for this repo/branch (never triggers a render/upload). */
+  peek(conductor: CharacterKind, orbiters: Orbiter[], count: number): string | null {
     const ring = canonicalOrbiters(orbiters).slice(0, this.#opts.maxOrbiters);
     const key = `v${this.#opts.artVersion}/${orbitKey(conductor, ring, count)}`;
-    const hit = this.#cache[key];
-    if (hit) return hit.url;
-    if (this.#available === false || this.#pending.has(key)) return null;
-    if ((this.#failedUntil.get(key) ?? 0) > Date.now()) return null;
-    this.#pending.add(key);
+    const cacheKey = this.#cacheKey(key);
+    const expectedUrl = this.rawUrl(key);
+    const hit = this.#cache[cacheKey] ?? (this.#cache[key]?.url === expectedUrl ? this.#cache[key] : undefined);
+    return hit ? hit.url : null;
+  }
+
+  /** URL of the exact ring if it's published; otherwise schedules it and returns null. */
+  urlFor(conductor: CharacterKind, orbiters: Orbiter[], count: number): string | null {
+    const cached = this.peek(conductor, orbiters, count);
+    if (cached) return cached;
+    const ring = canonicalOrbiters(orbiters).slice(0, this.#opts.maxOrbiters);
+    const key = `v${this.#opts.artVersion}/${orbitKey(conductor, ring, count)}`;
+    const cacheKey = this.#cacheKey(key);
+    if (this.#available === false || this.#pending.has(cacheKey)) return null;
+    if ((this.#failedUntil.get(cacheKey) ?? 0) > Date.now()) return null;
+    this.#pending.add(cacheKey);
     this.#queue.push({ key, spec: { scene: "orbit", character: conductor, orbiters: ring, count } });
     void this.#drain();
     return null;
@@ -95,6 +110,7 @@ export class DynamicArt {
     this.#working = true;
     try {
       for (let job = this.#queue.shift(); job; job = this.#queue.shift()) {
+        const cacheKey = this.#cacheKey(job.key);
         try {
           if (!(await this.#checkAvailable())) {
             this.#pending.clear();
@@ -102,16 +118,16 @@ export class DynamicArt {
             return;
           }
           const url = await this.#produce(job.key, job.spec);
-          this.#cache[job.key] = { url, at: Date.now() };
+          this.#cache[cacheKey] = { url, at: Date.now() };
           await mkdir(this.#opts.home, { recursive: true });
           await writeFile(this.#cacheFile, JSON.stringify(this.#cache, null, 2));
           this.#opts.logger.info(`art: published ${job.key}`);
           this.#onReady?.();
         } catch (err) {
-          this.#failedUntil.set(job.key, Date.now() + RETRY_AFTER_FAILURE_MS);
+          this.#failedUntil.set(cacheKey, Date.now() + RETRY_AFTER_FAILURE_MS);
           this.#opts.logger.warn(`art: could not publish ${job.key}: ${(err as Error).message}`);
         } finally {
-          this.#pending.delete(job.key);
+          this.#pending.delete(cacheKey);
         }
       }
     } finally {
@@ -199,7 +215,7 @@ export class DynamicArt {
     // so we never cache a 404 at the CDN for a file we're about to create.
     const exists = await this.#gh("GET", `/repos/${repo}/contents/${remotePath}?ref=${encodeURIComponent(branch)}`);
     if (exists.status !== 200) {
-      const size = this.#opts.size ?? 320;
+      const size = this.#opts.size ?? 256;
       const file = join(home, "art", `${key.replaceAll("/", "_")}.gif`);
       const frames = frameCount(spec);
       const started = Date.now();
@@ -207,7 +223,13 @@ export class DynamicArt {
       this.#opts.logger.debug(`art: rendered ${key} in ${Date.now() - started}ms`);
       const content = (await readFile(file)).toString("base64");
       const put = await this.#gh("PUT", `/repos/${repo}/contents/${remotePath}`, { message: `art: ${key}`, content, branch });
-      if (put.status !== 201 && put.status !== 200 && put.status !== 422) {
+      if (put.status === 422) {
+        // 422 can mean another machine just raced us, OR a real validation error; verify before waiting on CDN.
+        const raced = await this.#gh("GET", `/repos/${repo}/contents/${remotePath}?ref=${encodeURIComponent(branch)}`);
+        if (raced.status !== 200) {
+          throw new Error(`upload rejected (422): ${typeof put.json === "object" ? put.json?.message : put.json}`);
+        }
+      } else if (put.status !== 201 && put.status !== 200) {
         throw new Error(`upload failed (${put.status}): ${typeof put.json === "object" ? put.json?.message : put.json}`);
       }
     }

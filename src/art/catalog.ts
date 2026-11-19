@@ -1,11 +1,11 @@
-// Where each piece of art lives. The pre-rendered pack is committed under
-// assets/art and served from a public base URL (GitHub raw by default).
+// Where each piece of art lives. The pre-rendered pack is published to the
+// orphan `art` branch and served from a public base URL (GitHub raw by default).
 //
-//   art/<scene>/<character>.gif      activity loops (idle, thinking, …)
-//   art/orbit/<conductor>-<helper>-<n>.gif  orchestration fallbacks: a conductor with n helpers of
-//                                    one provider (n = 1..6, 6 means "6+"); exact mixed rings are
-//                                    rendered on demand (see dynamic.ts)
-//   art/badges/<character>.png       small-image provider badges
+//   <scene>/<character>.gif                activity loops (idle, thinking, …)
+//   orbit/<conductor>-<helper>-<n>.gif     orchestration fallbacks: a conductor with n helpers of
+//                                          one provider or "mixed" (n = 1..6, 6 means "6+"); exact
+//                                          mixed rings are rendered on demand (see dynamic.ts)
+//   badges/<character>.png                 small-image provider badges
 
 import type { CharacterKind } from "../render/characters.ts";
 import type { Orbiter, SceneKind } from "../render/scenes.ts";
@@ -13,6 +13,9 @@ import type { Orbiter, SceneKind } from "../render/scenes.ts";
 export const ORBIT_FALLBACK_MAX = 6;
 export const ORBIT_FALLBACK_CONDUCTORS: CharacterKind[] = ["t3", "claude", "codex"];
 export const ORBIT_FALLBACK_HELPERS: CharacterKind[] = ["claude", "codex", "grok"];
+export const ORBIT_MIXED_TEAM: CharacterKind[] = ["claude", "codex", "grok", "gemini", "cursor", "opencode"];
+
+export type OrbitFallbackHelper = CharacterKind | "mixed";
 
 export interface ArtConfig {
   baseUrl: string;
@@ -23,15 +26,18 @@ const join = (base: string, path: string): string => `${base.replace(/\/+$/, "")
 const versioned = (cfg: ArtConfig, path: string): string => `${join(cfg.baseUrl, path)}?v=${encodeURIComponent(cfg.version)}`;
 
 export const activityPath = (scene: Exclude<SceneKind, "orbit">, kind: CharacterKind): string => `${scene}/${kind}.gif`;
-export const orbitFallbackPath = (conductor: CharacterKind, helper: CharacterKind, n: number): string =>
+export const orbitFallbackPath = (conductor: CharacterKind, helper: OrbitFallbackHelper, n: number): string =>
   `orbit/${conductor}-${helper}-${Math.max(1, Math.min(ORBIT_FALLBACK_MAX, n))}.gif`;
 export const badgePath = (kind: CharacterKind): string => `badges/${kind}.png`;
 
 export const activityUrl = (cfg: ArtConfig, scene: Exclude<SceneKind, "orbit">, kind: CharacterKind): string =>
   versioned(cfg, activityPath(scene, kind));
-/** Closest pre-rendered ring: conductor and majority helper snapped to the fallback set. */
+/** Closest pre-rendered ring: mixed teams use the mixed fallback; single-provider teams snap to the fallback set. */
 export function orbitFallbackUrl(cfg: ArtConfig, conductor: CharacterKind, orbiters: Orbiter[], count: number): string {
   const c = ORBIT_FALLBACK_CONDUCTORS.includes(conductor) ? conductor : "t3";
+  if (count >= 2 && new Set(orbiters).size > 1) {
+    return versioned(cfg, orbitFallbackPath(c, "mixed", count));
+  }
   const tally = new Map<CharacterKind, number>();
   for (const o of orbiters) if (ORBIT_FALLBACK_HELPERS.includes(o)) tally.set(o, (tally.get(o) ?? 0) + 1);
   const helper = [...tally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "codex";

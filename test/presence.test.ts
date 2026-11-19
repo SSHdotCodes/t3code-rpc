@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { orbitKey } from "../src/art/catalog.ts";
+import { orbitFallbackUrl, orbitKey } from "../src/art/catalog.ts";
 import { DEFAULT_CONFIG, type Config } from "../src/config.ts";
 import { buildActivity } from "../src/presence/activity.ts";
 import { Director } from "../src/presence/director.ts";
@@ -159,4 +159,50 @@ test("activity payload uses versioned art URLs and buttons", () => {
 test("orbit keys are order independent", () => {
   assert.equal(orbitKey("claude", ["grok", "codex", "codex"], 3), orbitKey("claude", ["codex", "grok", "codex"], 3));
   assert.equal(orbitKey("claude", ["codex", "codex"], 14), "claude__codex2-of14");
+});
+
+test("mixed-provider orbit falls back to mixed ring art instead of pretending one provider", () => {
+  const mixed = orbitFallbackUrl(cfg.art, "claude", ["codex", "grok", "codex"], 3);
+  assert.equal(mixed, `${cfg.art.baseUrl}/orbit/claude-mixed-3.gif?v=${cfg.art.version}`);
+  const uniform = orbitFallbackUrl(cfg.art, "claude", ["codex", "codex", "codex"], 3);
+  assert.equal(uniform, `${cfg.art.baseUrl}/orbit/claude-codex-3.gif?v=${cfg.art.version}`);
+});
+
+test("single-agent mode surfaces background monitors and commands", () => {
+  const t = { ...thread(claude, "thinking"), background: { monitors: 2, commands: 1, tasks: 0 } };
+  const d = new Director().decide({ cfg, app, snapshot: snap([t]), usage })!;
+  assert.equal(d.stateLines[0], "Claude Opus 5.5 · 2 monitors · 1 command");
+});
+
+test("waiting state in orbit mode surfaces in details and pauses token rotation", () => {
+  const parent = thread(claude, "approval", [
+    { key: "a", origin: "app_owned", agent: codex, state: "executing" },
+    { key: "b", origin: "app_owned", agent: grok, state: "executing" },
+  ]);
+  const d = new Director().decide({ cfg, app, snapshot: snap([parent]), usage })!;
+  assert.equal(d.details, "✋ Waiting on you · 2 agents");
+  assert.equal(d.stateLines.length, 1);
+  assert.equal(d.mood, "orbit:claude:2:waiting");
+});
+
+test("tokens.showToday rotates today's tokens and hover includes top providers", () => {
+  const richUsage: UsageSummary = {
+    ...usage,
+    today: { input: 50_000_000, cachedInput: 40_000_000, cacheCreation: 0, output: 1_000_000, reasoning: 0, total: 51_000_000, turns: 12 },
+    byDriver: {
+      codex: { input: 2_500_000_000, cachedInput: 2_400_000_000, cacheCreation: 0, output: 10_000_000, reasoning: 0, total: 2_510_000_000, turns: 500 },
+      claude: { input: 1_500_000_000, cachedInput: 1_500_000_000, cacheCreation: 0, output: 7_000_000, reasoning: 0, total: 1_507_000_000, turns: 400 },
+    },
+  };
+  const withToday: Config = { ...cfg, tokens: { ...cfg.tokens, showToday: true } };
+  const d = new Director().decide({ cfg: withToday, app, snapshot: snap([thread(claude, "editing")]), usage: richUsage })!;
+  assert.equal(d.stateLines.length, 3);
+  assert.match(d.stateLines[2]!, /51M tokens · today/);
+  assert.match(d.smallText, /Codex 2\.51B, Claude 1\.51B/);
+});
+
+test("characterFor recognizes OpenAI reasoning models and Antigravity hints", () => {
+  assert.equal(characterFor({ instanceId: "x", driver: "acpRegistry", model: "o3-mini" }), "codex");
+  assert.equal(characterFor({ instanceId: "x", driver: "acpRegistry", model: "o4" }), "codex");
+  assert.equal(characterFor({ instanceId: "x", driver: "acpRegistry", model: "antigravity-pro" }), "antigravity");
 });

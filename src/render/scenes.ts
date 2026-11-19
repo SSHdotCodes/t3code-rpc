@@ -50,16 +50,16 @@ export interface Timing {
 export function timingFor(spec: SceneSpec): Timing {
   switch (spec.scene) {
     case "idle":
-      return { seconds: 4, fps: 20 };
+      return { seconds: 4, fps: 15 };
     case "orbit":
-      return { seconds: 4.8, fps: 20 };
+      return { seconds: 4.8, fps: 15 };
     case "thinking":
     case "web":
-      return { seconds: 3, fps: 25 };
+      return { seconds: 3, fps: 16 };
     case "done":
-      return { seconds: 2, fps: 25 };
+      return { seconds: 2, fps: 16 };
     default:
-      return { seconds: 2.4, fps: 25 };
+      return { seconds: 2.4, fps: 15 };
   }
 }
 

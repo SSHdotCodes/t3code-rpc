@@ -13,16 +13,23 @@ export interface InstanceInfo {
 
 export type Instances = Record<string, InstanceInfo>;
 
-let cache: { key: string; value: Instances } | null = null;
+const cache = new Map<string, { key: string; value: Instances }>();
 
 const safe = (v: unknown, max = 48): string | undefined =>
   typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
 
 export function readInstances(settingsPath: string): Instances {
+  let st;
   try {
-    const st = statSync(settingsPath);
-    const key = `${settingsPath}:${st.mtimeMs}:${st.size}`;
-    if (cache?.key === key) return cache.value;
+    st = statSync(settingsPath);
+  } catch {
+    cache.delete(settingsPath);
+    return {};
+  }
+  const key = `${st.mtimeMs}:${st.size}`;
+  const hit = cache.get(settingsPath);
+  if (hit?.key === key) return hit.value;
+  try {
     const raw = JSON.parse(readFileSync(settingsPath, "utf8")) as { providerInstances?: Record<string, unknown> };
     const value: Instances = {};
     for (const [id, entry] of Object.entries(raw.providerInstances ?? {})) {
@@ -30,9 +37,10 @@ export function readInstances(settingsPath: string): Instances {
       const e = entry as { driver?: unknown; displayName?: unknown; config?: { agentId?: unknown } };
       value[id] = { driver: safe(e.driver), displayName: safe(e.displayName), agentId: safe(e.config?.agentId) };
     }
-    cache = { key, value };
+    cache.set(settingsPath, { key, value });
     return value;
   } catch {
-    return cache?.value ?? {};
+    // Transient mid-write parse failure: keep the last good reading for THIS settings file only.
+    return hit?.value ?? {};
   }
 }

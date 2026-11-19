@@ -38,22 +38,32 @@ interface ParsedCache {
   reader: TranscriptReader;
 }
 
-let parsed: ParsedCache | null = null;
+const parsedByFile = new Map<string, ParsedCache>();
 const readers = new Map<string, TranscriptReader>();
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
 
+export function scanCachePath(userdataDir: string): string {
+  return join(userdataDir, SCAN_CACHE_FILE_NAME);
+}
+
+export function hasScanCache(userdataDir: string): boolean {
+  return existsSync(scanCachePath(userdataDir));
+}
+
 /** Parse T3's scan cache (memoised by file identity; the file only changes when T3 rescans). */
 export function readScanCache(userdataDir: string): ParsedCache | null {
-  const file = join(userdataDir, SCAN_CACHE_FILE_NAME);
+  const file = scanCachePath(userdataDir);
   let st;
   try {
     st = statSync(file);
   } catch {
+    parsedByFile.delete(file);
     return null;
   }
   const identity = `${file}:${st.size}:${st.mtimeMs}`;
-  if (parsed?.identity === identity) return parsed;
+  const cached = parsedByFile.get(file);
+  if (cached?.identity === identity) return cached;
   try {
     const doc = JSON.parse(readFileSync(file, "utf8")) as {
       version?: number;
@@ -81,8 +91,9 @@ export function readScanCache(userdataDir: string): ParsedCache | null {
     }
     let reader = readers.get(file);
     if (!reader) readers.set(file, (reader = new TranscriptReader()));
-    parsed = { identity, mtimeMs: st.mtimeMs, records, transcripts: decodeTranscriptCache(doc), reader };
-    return parsed;
+    const entry: ParsedCache = { identity, mtimeMs: st.mtimeMs, records, transcripts: decodeTranscriptCache(doc), reader };
+    parsedByFile.set(file, entry);
+    return entry;
   } catch {
     return null;
   }
@@ -271,6 +282,7 @@ export async function readUsagePage(userdataDir: string, opts: { windowDays: num
   if (!cache) return null;
   const now = opts.now ?? Date.now();
   const since = windowStartMs(opts.windowDays, now);
+  const todaySince = windowStartMs(1, now);
   const until = new Date(now);
   until.setHours(24, 0, 0, 0);
   const untilMs = until.getTime();
@@ -278,8 +290,10 @@ export async function readUsagePage(userdataDir: string, opts: { windowDays: num
   const openCode = existsSync(openCodeRoot()) ? await readOpenCode(openCodeRoot(), since) : [];
   const seen = new Set<string>();
   const totals = emptyTotals();
+  const today = emptyTotals();
   const byDriver: Record<string, TokenTotals> = {};
   const sessions = new Map<string, Set<string>>();
+  const todaySessions = new Set<string>();
   const add = (r: CacheRecord) => {
     if (r.key !== null) {
       if (seen.has(r.key)) return;
@@ -287,7 +301,8 @@ export async function readUsagePage(userdataDir: string, opts: { windowDays: num
     }
     if (r.ts < since || r.ts >= untilMs) return;
     const t = (byDriver[r.provider] ??= emptyTotals());
-    for (const bucket of [t, totals]) {
+    const buckets = r.ts >= todaySince ? [t, totals, today] : [t, totals];
+    for (const bucket of buckets) {
       bucket.input += r.uncached + r.cached + r.cacheWrite;
       bucket.cachedInput += r.cached;
       bucket.cacheCreation += r.cacheWrite;
@@ -298,7 +313,10 @@ export async function readUsagePage(userdataDir: string, opts: { windowDays: num
     }
     let set = sessions.get(r.provider);
     if (!set) sessions.set(r.provider, (set = new Set()));
-    if (r.session.length > 0) set.add(r.session);
+    if (r.session.length > 0) {
+      set.add(r.session);
+      if (r.ts >= todaySince) todaySessions.add(`${r.provider}\0${r.session}`);
+    }
   };
   if (cache.transcripts.files.size === 0 && cache.transcripts.sources.length === 0) {
     // Backward compatibility for cache-only callers without scan metadata.
@@ -310,7 +328,8 @@ export async function readUsagePage(userdataDir: string, opts: { windowDays: num
     byDriver[provider]!.sessions = set.size;
     totals.sessions! += set.size;
   }
-  return { windowDays: opts.windowDays, since, totals, byDriver, computedAt: now, source: "t3-usage", cacheUpdatedAt: cache.mtimeMs };
+  today.sessions = todaySessions.size;
+  return { windowDays: opts.windowDays, since, totals, today, byDriver, computedAt: now, source: "t3-usage", cacheUpdatedAt: cache.mtimeMs };
 }
 
 export type { CacheRecord };

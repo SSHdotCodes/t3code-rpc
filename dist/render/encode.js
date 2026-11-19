@@ -73,7 +73,8 @@ function write(stream, chunk) {
  */
 export async function encodeGif(frameCount, frameAt, opts) {
     await mkdir(dirname(opts.out), { recursive: true });
-    const filter = "[0:v]split[a][b];[a]palettegen=max_colors=255:stats_mode=full:reserve_transparent=0[p];" +
+    const maxColors = Math.max(16, Math.min(255, opts.maxColors ?? 128));
+    const filter = `[0:v]split[a][b];[a]palettegen=max_colors=${maxColors}:stats_mode=full:reserve_transparent=0[p];` +
         "[b][p]paletteuse=dither=none:diff_mode=rectangle";
     const args = [
         "-hide_banner",

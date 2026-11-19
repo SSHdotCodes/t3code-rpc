@@ -99,6 +99,8 @@ export interface UsageSummary {
   windowDays: number;
   since: number;
   totals: TokenTotals;
+  /** Today's tokens (since local midnight), when computed alongside the trailing window. */
+  today?: TokenTotals;
   /** Per provider driver. */
   byDriver: Record<string, TokenTotals>;
   computedAt: number;

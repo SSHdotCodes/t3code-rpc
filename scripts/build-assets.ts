@@ -1,27 +1,46 @@
-// Render the committed art pack into assets/art:
-//   activity loops for every scene × character, orchestration fallbacks with
-//   1..9 anonymous wisps, provider badges, and a manifest.
+// Render the art pack into assets/art (or --out <dir>):
+//   activity loops for every scene × character, single-provider + mixed
+//   orchestration fallbacks, provider badges, and a manifest.
 //
-//   node scripts/build-assets.ts [--only scene|orbit|badges] [--jobs 4]
+//   node scripts/build-assets.ts [--only scene|orbit|badges] [--jobs 4] [--out dir]
 
 import { mkdir, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { BADGE_KINDS, badgeSvg } from "../src/art/badges.ts";
-import { activityPath, badgePath, ORBIT_FALLBACK_CONDUCTORS, ORBIT_FALLBACK_HELPERS, ORBIT_FALLBACK_MAX, orbitFallbackPath } from "../src/art/catalog.ts";
-import { CHARACTER_KINDS } from "../src/render/characters.ts";
+import {
+  activityPath,
+  badgePath,
+  ORBIT_FALLBACK_CONDUCTORS,
+  ORBIT_FALLBACK_HELPERS,
+  ORBIT_FALLBACK_MAX,
+  ORBIT_MIXED_TEAM,
+  orbitFallbackPath,
+} from "../src/art/catalog.ts";
+import { CHARACTER_KINDS, type CharacterKind } from "../src/render/characters.ts";
 import { encodeGif, svgToPng } from "../src/render/encode.ts";
-import { ACTIVITY_SCENES, frameCount, renderFrame, type SceneSpec, timingFor } from "../src/render/scenes.ts";
+import { ACTIVITY_SCENES, renderFrame, type SceneSpec, timingFor } from "../src/render/scenes.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const OUT = join(ROOT, "assets", "art");
-export const ART_SIZE = 320;
+export const ART_SIZE = 256;
 const ORBIT_FALLBACK_SIZE = 256;
 
-const { values } = parseArgs({ options: { only: { type: "string" }, jobs: { type: "string", default: "4" } } });
+const { values } = parseArgs({
+  options: {
+    only: { type: "string" },
+    jobs: { type: "string", default: "4" },
+    out: { type: "string" },
+  },
+});
+const OUT = values.out ? resolve(values.out) : join(ROOT, "assets", "art");
 const only = values.only;
 const jobs = Math.max(1, Number(values.jobs));
+
+function mixedOrbiters(conductor: CharacterKind, n: number): CharacterKind[] {
+  const pool = [...ORBIT_MIXED_TEAM.filter((k) => k !== conductor), ...ORBIT_MIXED_TEAM.filter((k) => k === conductor)];
+  return Array.from({ length: n }, (_, i) => pool[i % pool.length]!);
+}
 
 interface Job {
   path: string;
@@ -32,9 +51,9 @@ const queue: Job[] = [];
 const gifJob = (path: string, spec: SceneSpec, size: number, fpsOverride?: number): Job => ({
   path,
   run: async (file) => {
-    const { fps } = timingFor(spec);
+    const { fps, seconds } = timingFor(spec);
     const useFps = fpsOverride ?? fps;
-    const frames = Math.round(timingFor(spec).seconds * useFps);
+    const frames = Math.round(seconds * useFps);
     await encodeGif(frames, (i) => renderFrame(spec, i / frames, size), { size, fps: useFps, out: file });
   },
 });
@@ -44,7 +63,7 @@ if (!only || only === "scene") {
     for (const character of CHARACTER_KINDS) queue.push(gifJob(activityPath(scene, character), { scene, character }, ART_SIZE));
 }
 if (!only || only === "orbit") {
-  for (const character of ORBIT_FALLBACK_CONDUCTORS)
+  for (const character of ORBIT_FALLBACK_CONDUCTORS) {
     for (const helper of ORBIT_FALLBACK_HELPERS)
       for (let n = 1; n <= ORBIT_FALLBACK_MAX; n++) {
         const spec: SceneSpec = {
@@ -53,8 +72,18 @@ if (!only || only === "orbit") {
           orbiters: Array.from({ length: n }, () => helper),
           countLabel: n === ORBIT_FALLBACK_MAX ? `${n}+` : undefined,
         };
-        queue.push(gifJob(orbitFallbackPath(character, helper, n), spec, ORBIT_FALLBACK_SIZE, 16));
+        queue.push(gifJob(orbitFallbackPath(character, helper, n), spec, ORBIT_FALLBACK_SIZE));
       }
+    for (let n = 2; n <= ORBIT_FALLBACK_MAX; n++) {
+      const spec: SceneSpec = {
+        scene: "orbit",
+        character,
+        orbiters: mixedOrbiters(character, n),
+        countLabel: n === ORBIT_FALLBACK_MAX ? `${n}+` : undefined,
+      };
+      queue.push(gifJob(orbitFallbackPath(character, "mixed", n), spec, ORBIT_FALLBACK_SIZE));
+    }
+  }
 }
 if (!only || only === "badges") {
   for (const kind of BADGE_KINDS)
@@ -89,7 +118,7 @@ await writeFile(
       characters: CHARACTER_KINDS,
       orbitFallbackMax: ORBIT_FALLBACK_MAX,
       orbitFallbackConductors: ORBIT_FALLBACK_CONDUCTORS,
-      orbitFallbackHelpers: ORBIT_FALLBACK_HELPERS,
+      orbitFallbackHelpers: [...ORBIT_FALLBACK_HELPERS, "mixed"],
     },
     null,
     2,

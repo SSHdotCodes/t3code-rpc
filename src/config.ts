@@ -34,6 +34,8 @@ export interface Config {
      * Pi and OpenCode session). t3-turns: only turns that ran inside T3 Code.
      */
     source: "t3-usage" | "t3-turns";
+    /** Also rotate in today's token total when windowDays !== 1. */
+    showToday: boolean;
   };
   showModel: boolean;
   /** Show the project folder name (never chat names). Off by default. */
@@ -74,7 +76,7 @@ export const DEFAULT_CONFIG: Config = {
   appName: "T3 Code",
   activityType: 0,
   statusDisplay: "name",
-  tokens: { show: true, windowDays: 30, metric: "total", source: "t3-usage" },
+  tokens: { show: true, windowDays: 30, metric: "total", source: "t3-usage", showToday: false },
   showModel: true,
   showProject: false,
   showElapsed: true,
@@ -89,12 +91,24 @@ export const DEFAULT_CONFIG: Config = {
     { label: "T3Code RPC", url: REPO_URL },
   ],
   art: {
-    baseUrl: `https://raw.githubusercontent.com/${REPO}/main/assets/art`,
-    version: "1",
+    baseUrl: `https://raw.githubusercontent.com/${REPO}/art`,
+    version: "2",
     dynamic: { enabled: false, githubRepo: REPO, branch: "art-cache", maxOrbiters: 16 },
   },
   t3Home: null,
 };
+
+const ENUM_OPTIONS: Record<string, readonly unknown[]> = {
+  activityType: [0, 2, 3, 5],
+  statusDisplay: ["name", "details", "state"],
+  "tokens.metric": ["total", "fresh", "output"],
+  "tokens.source": ["t3-usage", "t3-turns"],
+};
+
+function isAllowed(path: string, value: unknown): boolean {
+  const allowed = ENUM_OPTIONS[path];
+  return !allowed || allowed.includes(value);
+}
 
 export function rpcHome(): string {
   return process.env.T3CODE_RPC_HOME || join(homedir(), ".t3code-rpc");
@@ -108,16 +122,21 @@ function isObject(v: unknown): v is Json {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Deep-merge user values over defaults, keeping only keys/types the defaults know. */
-function merge<T>(defaults: T, user: unknown): T {
+/** Deep-merge user values over defaults, keeping only keys/types/enums the defaults know. */
+function merge<T>(defaults: T, user: unknown, path = ""): T {
   if (!isObject(defaults) || !isObject(user)) {
     if (user === undefined) return defaults;
-    if (defaults === null) return user as T;
+    if (defaults === null) return (user === null || typeof user === "string" ? user : defaults) as T;
     if (Array.isArray(defaults)) return (Array.isArray(user) ? user : defaults) as T;
-    return (typeof user === typeof defaults ? user : defaults) as T;
+    if (typeof user !== typeof defaults) return defaults;
+    if (typeof user === "number" && !Number.isFinite(user)) return defaults;
+    return (isAllowed(path, user) ? user : defaults) as T;
   }
   const out: Json = { ...defaults };
-  for (const key of Object.keys(defaults)) out[key] = merge((defaults as Json)[key], user[key]);
+  for (const key of Object.keys(defaults)) {
+    const childPath = path ? `${path}.${key}` : key;
+    out[key] = merge((defaults as Json)[key], user[key], childPath);
+  }
   return out as T;
 }
 
@@ -134,8 +153,12 @@ export function loadConfig(): Config {
   const cfg = merge(DEFAULT_CONFIG, user);
   if (process.env.T3CODE_RPC_CLIENT_ID) cfg.clientId = process.env.T3CODE_RPC_CLIENT_ID;
   cfg.tokens.windowDays = Math.max(0, Math.floor(cfg.tokens.windowDays));
-  cfg.pollMs = Math.max(250, cfg.pollMs);
+  cfg.pollMs = Math.max(250, Math.floor(cfg.pollMs));
   cfg.rotateSec = Math.max(0, cfg.rotateSec);
+  cfg.doneHoldSec = Math.max(0, cfg.doneHoldSec);
+  cfg.errorHoldSec = Math.max(0, cfg.errorHoldSec);
+  cfg.art.dynamic.maxOrbiters = Math.max(1, Math.min(24, Math.floor(cfg.art.dynamic.maxOrbiters)));
+  if (cfg.t3Home !== null && cfg.t3Home.trim() === "") cfg.t3Home = null;
   return cfg;
 }
 
@@ -154,21 +177,52 @@ export function writeUserConfig(json: Json): void {
   writeFileSync(configPath(), JSON.stringify(json, null, 2) + "\n");
 }
 
+function resolveDefaultKey(dotted: string): { keys: string[]; probe: unknown } {
+  const keys = dotted.split(".").filter(Boolean);
+  if (keys.length === 0) throw new Error(`Unknown config key: ${dotted}`);
+  let probe: unknown = DEFAULT_CONFIG;
+  for (const k of keys) {
+    if (!isObject(probe) || !Object.hasOwn(probe, k)) throw new Error(`Unknown config key: ${dotted}`);
+    probe = probe[k];
+  }
+  return { keys, probe };
+}
+
+function parseBool(dotted: string, raw: string): boolean {
+  const lower = raw.trim().toLowerCase();
+  if (lower === "true" || lower === "1" || lower === "on" || lower === "yes") return true;
+  if (lower === "false" || lower === "0" || lower === "off" || lower === "no") return false;
+  throw new Error(`${dotted} expects a boolean (true/false)`);
+}
+
 /** Set a dotted key (e.g. "tokens.windowDays") from a CLI string value. */
 export function setConfigValue(dotted: string, raw: string): Json {
   const json = readUserConfig();
-  const keys = dotted.split(".");
-  // validate the key against the defaults
-  let probe: unknown = DEFAULT_CONFIG;
-  for (const k of keys) {
-    if (!isObject(probe) || !(k in probe)) throw new Error(`Unknown config key: ${dotted}`);
-    probe = probe[k];
-  }
+  const { keys, probe } = resolveDefaultKey(dotted);
   let value: unknown = raw;
-  if (typeof probe === "number") value = Number(raw);
-  else if (typeof probe === "boolean") value = raw === "true" || raw === "1" || raw === "on" || raw === "yes";
-  else if (Array.isArray(probe) || isObject(probe)) value = JSON.parse(raw);
-  if (typeof probe === "number" && Number.isNaN(value)) throw new Error(`${dotted} expects a number`);
+  if (probe === null) {
+    const trimmed = raw.trim();
+    value = trimmed === "" || trimmed.toLowerCase() === "null" ? null : trimmed;
+  } else if (typeof probe === "number") {
+    value = Number(raw);
+    if (!Number.isFinite(value)) throw new Error(`${dotted} expects a number`);
+  } else if (typeof probe === "boolean") {
+    value = parseBool(dotted, raw);
+  } else if (Array.isArray(probe) || isObject(probe)) {
+    value = JSON.parse(raw);
+    if (Array.isArray(probe) && !Array.isArray(value)) throw new Error(`${dotted} expects a JSON array`);
+    if (isObject(probe) && !isObject(value)) throw new Error(`${dotted} expects a JSON object`);
+  }
+  if (!isAllowed(dotted, value)) {
+    throw new Error(`${dotted} must be one of: ${ENUM_OPTIONS[dotted]!.join(", ")}`);
+  }
+  if (dotted === "pollMs" && (value as number) < 250) throw new Error("pollMs must be at least 250");
+  if ((dotted === "tokens.windowDays" || dotted === "rotateSec" || dotted === "doneHoldSec" || dotted === "errorHoldSec") && (value as number) < 0) {
+    throw new Error(`${dotted} cannot be negative`);
+  }
+  if (dotted === "art.dynamic.maxOrbiters" && ((value as number) < 1 || (value as number) > 24)) {
+    throw new Error("art.dynamic.maxOrbiters must be between 1 and 24");
+  }
   let node: Json = json;
   for (const k of keys.slice(0, -1)) {
     if (!isObject(node[k])) node[k] = {};
@@ -177,4 +231,30 @@ export function setConfigValue(dotted: string, raw: string): Json {
   node[keys[keys.length - 1]!] = value;
   writeUserConfig(json);
   return json;
+}
+
+/** Remove a dotted key from the user config so it reverts to its default. */
+export function unsetConfigValue(dotted: string): Json {
+  const { keys } = resolveDefaultKey(dotted);
+  const json = readUserConfig();
+  const stack: Array<{ node: Json; key: string }> = [];
+  let node: Json = json;
+  for (const k of keys.slice(0, -1)) {
+    if (!isObject(node[k])) return json;
+    stack.push({ node, key: k });
+    node = node[k] as Json;
+  }
+  delete node[keys[keys.length - 1]!];
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const { node: parent, key } = stack[i]!;
+    if (isObject(parent[key]) && Object.keys(parent[key] as Json).length === 0) delete parent[key];
+  }
+  writeUserConfig(json);
+  return json;
+}
+
+/** Reset user config back to defaults. */
+export function resetConfig(): Json {
+  writeUserConfig({});
+  return {};
 }

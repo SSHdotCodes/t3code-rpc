@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 // t3code-rpc — Discord Rich Presence for T3 Code.
 import { execFile, spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, unwatchFile, watchFile, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
 import { activityUrl, badgeUrl } from "./art/catalog.js";
-import { configPath, DEFAULT_CONFIG, loadConfig, readUserConfig, rpcHome, setConfigValue } from "./config.js";
+import { configPath, DEFAULT_CONFIG, loadConfig, readUserConfig, REPO, resetConfig, rpcHome, setConfigValue, unsetConfigValue } from "./config.js";
 import { Daemon, makeLogger, Observer } from "./daemon.js";
 import { PresenceClient } from "./discord/presence.js";
 import { formatTokens, windowLabel } from "./presence/format.js";
 import { CHARACTER_KINDS } from "./render/characters.js";
 import { ACTIVITY_SCENES } from "./render/scenes.js";
 import { T3Database } from "./t3/db.js";
+import { hasScanCache } from "./t3/usagePage.js";
 const run = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -29,17 +30,17 @@ Usage: t3code-rpc <command> [options]
   start               Start in the background (uses the login service if installed)
   stop                Stop the background daemon and clear the presence
   restart             Stop, then start
-  status              Show what T3 Code is doing and what Discord would show
+  status [--json]     Show what T3 Code is doing and what Discord would show
   preview [--watch]   Print the activity payload without touching Discord
   demo <scene>        Show a scene on Discord for a minute, e.g.
                         demo thinking --as codex
                         demo orbit --as claude --with codex,codex,grok
                       scenes: ${ACTIVITY_SCENES.join(", ")}, orbit
   usage [--days N]    Token usage from T3 Code (default: configured window)
-  doctor              Check Discord, T3 Code, art hosting and rendering tools
+  doctor [--json]     Check Discord, T3 Code, art hosting and rendering tools
   install             Start automatically at login (launchd / systemd / Startup folder)
   uninstall           Remove the login service and clear the presence
-  config [path|get [key]|set <key> <value>]
+  config [path|get [key]|set <key> <value>|unset <key>|reset|defaults|show]
                       e.g. config set tokens.windowDays 7
   logs [-f]           Show the daemon log
 `;
@@ -78,11 +79,25 @@ function serviceInstalled() {
     return false;
 }
 const xml = (s) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+const systemdQuote = (s) => `"${s.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+function servicePathEnv(node) {
+    const parts = [
+        dirname(node),
+        ...(process.env.PATH ? process.env.PATH.split(delimiter) : []),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ].filter(Boolean);
+    return [...new Set(parts)].join(":");
+}
 async function install() {
     mkdirSync(rpcHome(), { recursive: true });
     const node = process.execPath;
     const p = platform();
-    const pathEnv = [dirname(node), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":");
+    const pathEnv = servicePathEnv(node);
     if (p === "darwin") {
         const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -110,7 +125,7 @@ async function install() {
     }
     else if (p === "linux") {
         mkdirSync(dirname(unitPath()), { recursive: true });
-        writeFileSync(unitPath(), `[Unit]\nDescription=T3 Code Discord Rich Presence\nAfter=graphical-session.target\n\n[Service]\nExecStart=${node} ${BIN} run\nRestart=on-failure\nRestartSec=10\nEnvironment=PATH=${pathEnv}\n\n[Install]\nWantedBy=default.target\n`);
+        writeFileSync(unitPath(), `[Unit]\nDescription=T3 Code Discord Rich Presence\nAfter=graphical-session.target\n\n[Service]\nExecStart=${systemdQuote(node)} ${systemdQuote(BIN)} run\nRestart=on-failure\nRestartSec=10\nEnvironment=${systemdQuote(`PATH=${pathEnv}`)}\n\n[Install]\nWantedBy=default.target\n`);
         await run("systemctl", ["--user", "daemon-reload"]);
         await run("systemctl", ["--user", "enable", "--now", "t3code-rpc.service"]);
         console.log(`Installed ${unitPath()} and started it.`);
@@ -192,7 +207,7 @@ async function runForeground() {
     }
     mkdirSync(rpcHome(), { recursive: true });
     writeFileSync(pidFile(), String(process.pid));
-    const daemon = new Daemon(loadConfig(), makeLogger());
+    const daemon = new Daemon(loadConfig(), makeLogger(), { logPath: logFile() });
     let shuttingDown = false;
     const shutdown = async () => {
         if (shuttingDown)
@@ -204,7 +219,10 @@ async function runForeground() {
     };
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
-    process.on("SIGHUP", shutdown);
+    process.on("SIGHUP", () => {
+        daemon.reloadConfig();
+        void daemon.tick();
+    });
     await daemon.start();
 }
 function describe(activity) {
@@ -219,24 +237,42 @@ function describe(activity) {
         `  hover: ${activity.assets?.large_text} | ${activity.assets?.small_text}`,
     ].join("\n");
 }
-async function status() {
+async function status(asJson = false) {
     const cfg = loadConfig();
     const obs = new Observer(cfg, makeLogger(), { dynamic: false });
-    const f = await obs.frame();
-    const pid = readPid();
-    console.log(`daemon:   ${pid ? `running (pid ${pid})` : "not running"}${serviceInstalled() ? " · login service installed" : ""}`);
-    console.log(`T3 Code:  ${f.app.running ? `open (server ${f.app.serverVersion ?? "?"}, port ${f.app.port})` : "closed"}`);
-    if (f.snapshot) {
-        const kids = f.snapshot.threads.reduce((n, t) => n + t.children.length, 0);
-        const busy = f.snapshot.threads.reduce((n, t) => n + t.children.filter((c) => c.state !== "outstanding").length, 0);
-        console.log(`activity: ${f.snapshot.threads.length} active thread(s), ${kids} subagent(s) pending (${busy} working right now)`);
+    try {
+        const f = await obs.frame();
+        const pid = readPid();
+        const scanCache = hasScanCache(obs.paths.userdataDir);
+        if (asJson) {
+            console.log(JSON.stringify({
+                daemon: { running: !!pid, pid, serviceInstalled: serviceInstalled() },
+                t3: { ...f.app, home: obs.paths.home, usageScanCache: scanCache },
+                snapshot: f.snapshot,
+                usage: f.usage,
+                mood: f.decision?.mood ?? null,
+                activity: f.activity,
+            }, null, 2));
+            return;
+        }
+        console.log(`daemon:   ${pid ? `running (pid ${pid})` : "not running"}${serviceInstalled() ? " · login service installed" : ""}`);
+        console.log(`T3 Code:  ${f.app.running ? `open (server ${f.app.serverVersion ?? "?"}, port ${f.app.port}, home ${obs.paths.home})` : "closed"}`);
+        if (f.snapshot) {
+            const kids = f.snapshot.threads.reduce((n, t) => n + t.children.length, 0);
+            const busy = f.snapshot.threads.reduce((n, t) => n + t.children.filter((c) => c.state !== "outstanding").length, 0);
+            console.log(`activity: ${f.snapshot.threads.length} active thread(s), ${kids} subagent(s) pending (${busy} working right now)`);
+        }
+        if (f.usage) {
+            const { sessions, turns } = f.usage.totals;
+            const todayNote = f.usage.today && f.usage.windowDays !== 1 ? `, ${formatTokens(f.usage.today.total)} today` : "";
+            const fallbackNote = cfg.tokens.source === "t3-usage" && f.usage.source === "t3-turns" ? " [fallback: open T3 Usage page once]" : "";
+            console.log(`tokens:   ${formatTokens(f.usage.totals.total)} (${windowLabel(f.usage.windowDays)}${todayNote}, ${sessions !== undefined ? `${sessions} sessions` : `${turns} turns`})${fallbackNote}`);
+        }
+        console.log(`\nDiscord would show (${f.decision?.mood ?? "nothing"}):\n${describe(f.activity)}`);
     }
-    if (f.usage) {
-        const { sessions, turns } = f.usage.totals;
-        console.log(`tokens:   ${formatTokens(f.usage.totals.total)} (${windowLabel(f.usage.windowDays)}, ${sessions !== undefined ? `${sessions} sessions` : `${turns} turns`})`);
+    finally {
+        obs.closeDb();
     }
-    console.log(`\nDiscord would show (${f.decision?.mood ?? "nothing"}):\n${describe(f.activity)}`);
-    obs.closeDb();
 }
 async function preview(watch) {
     const obs = new Observer(loadConfig(), makeLogger(), { dynamic: false });
@@ -249,6 +285,10 @@ async function preview(watch) {
     obs.closeDb();
 }
 async function demo(scene, as, withList, seconds) {
+    const runningPid = readPid();
+    if (runningPid) {
+        console.warn(`Note: background daemon (pid ${runningPid}) is running and may overwrite the demo. Run \`t3code-rpc stop\` first if it flickers.\n`);
+    }
     const cfg = loadConfig();
     const kind = (as ?? "t3");
     if (!CHARACTER_KINDS.includes(kind))
@@ -326,19 +366,28 @@ async function usage(days) {
             console.log(row(driver, t));
         console.log("-".repeat(84));
         console.log(row("all", u.totals));
+        if (u.today && u.windowDays !== 1)
+            console.log(row("today", u.today));
         if ("cacheUpdatedAt" in u)
             console.log(`\nT3 last rescanned transcripts at ${new Date(u.cacheUpdatedAt).toLocaleString()}.`);
+        else if (cfg.tokens.source === "t3-usage")
+            console.log("\nNote: T3's usage scan cache wasn't found yet — open T3 Code's Usage page once to include all local sessions.");
     }
     finally {
         obs.closeDb();
     }
 }
-async function doctor() {
+async function doctor(asJson = false) {
     const cfg = loadConfig();
-    const ok = (good, label, detail = "") => console.log(`${good ? "✓" : "✗"} ${label}${detail ? ` — ${detail}` : ""}`);
+    const checks = [];
+    const ok = (good, label, detail = "") => {
+        checks.push({ ok: good, label, detail });
+        if (!asJson)
+            console.log(`${good ? "✓" : "✗"} ${label}${detail ? ` — ${detail}` : ""}`);
+    };
     const [major, minor] = process.versions.node.split(".").map(Number);
     ok(major > 22 || (major === 22 && minor >= 18), "Node.js", process.versions.node);
-    ok(existsSync(configPath()) || true, "config", existsSync(configPath()) ? configPath() : "defaults (no config file yet)");
+    ok(true, "config", existsSync(configPath()) ? configPath() : "defaults (no config file yet)");
     ok(cfg.clientId !== "", "Discord application", cfg.clientId);
     const obs = new Observer(cfg, makeLogger(), { dynamic: false });
     const app = await obs.app();
@@ -348,6 +397,10 @@ async function doctor() {
         const db = new T3Database(app.dbPath);
         ok(db.hasV2, "T3 Code schema", db.hasV2 ? "orchestration v2" : "unsupported/old schema");
         db.close();
+    }
+    if (cfg.tokens.source === "t3-usage") {
+        const hasCache = hasScanCache(obs.paths.userdataDir);
+        ok(hasCache, "T3 usage scan cache", hasCache ? "present (matching Usage page)" : "not found yet — open T3 Code's Usage page once (falling back to t3-turns)");
     }
     // Discord: try a handshake
     const client = new PresenceClient({ clientId: cfg.clientId });
@@ -378,19 +431,121 @@ async function doctor() {
         ok(resvg, "@resvg/resvg-js (exact orchestration rings)");
         const gh = await run("gh", ["auth", "status"]).then(() => true, () => !!(process.env.GITHUB_TOKEN || process.env.GH_TOKEN));
         ok(gh, "GitHub auth", `publishing rings to ${cfg.art.dynamic.githubRepo}@${cfg.art.dynamic.branch}`);
+        if (gh) {
+            const canPush = await run("gh", ["api", `repos/${cfg.art.dynamic.githubRepo}`, "--jq", ".permissions.push"])
+                .then(({ stdout }) => stdout.trim() === "true")
+                .catch(() => null);
+            if (canPush === false) {
+                ok(false, "GitHub repo access", `no push access to ${cfg.art.dynamic.githubRepo} — set art.dynamic.githubRepo to a public repo you own`);
+            }
+            else if (canPush === true) {
+                ok(true, "GitHub repo access", `push enabled on ${cfg.art.dynamic.githubRepo}`);
+            }
+        }
     }
-    else {
+    else if (!asJson) {
         console.log("· exact orchestration rings off (art.dynamic.enabled = false) — pre-rendered rings are used");
     }
     ok(true, "daemon", readPid() ? `running (pid ${readPid()})` : "not running");
+    if (asJson)
+        console.log(JSON.stringify({ ok: checks.every((c) => c.ok), checks }, null, 2));
     process.exit(0);
 }
+/** Cross-platform tail -f for daemon.log (works on Windows without GNU tail). */
+function followFile(file) {
+    const initial = readFileSync(file, "utf8").split("\n").slice(-50).join("\n");
+    if (initial)
+        process.stdout.write(initial + (initial.endsWith("\n") ? "" : "\n"));
+    let offset = statSync(file).size;
+    const readNew = () => {
+        let size;
+        try {
+            size = statSync(file).size;
+        }
+        catch {
+            return;
+        }
+        if (size < offset)
+            offset = 0; // rotated/truncated
+        if (size <= offset)
+            return;
+        const fd = openSync(file, "r");
+        try {
+            const buf = Buffer.alloc(size - offset);
+            const n = readSync(fd, buf, 0, buf.length, offset);
+            offset += n;
+            if (n > 0)
+                process.stdout.write(buf.subarray(0, n));
+        }
+        finally {
+            closeSync(fd);
+        }
+    };
+    watchFile(file, { interval: 500 }, readNew);
+    process.on("SIGINT", () => {
+        unwatchFile(file, readNew);
+        process.exit(0);
+    });
+}
+async function showLogs(follow) {
+    if (platform() === "linux" && serviceInstalled() && !existsSync(logFile())) {
+        const args = ["--user", "-u", "t3code-rpc.service", "-n", "60", ...(follow ? ["-f"] : ["--no-pager"])];
+        const child = spawn("journalctl", args, { stdio: "inherit" });
+        await new Promise((res) => child.on("close", () => res()));
+        return;
+    }
+    if (!existsSync(logFile()))
+        return console.log("No log yet.");
+    if (follow) {
+        followFile(logFile());
+        return;
+    }
+    console.log(readFileSync(logFile(), "utf8").split("\n").slice(-60).join("\n"));
+}
 async function main() {
+    const rawArgs = process.argv.slice(2);
+    // Handle `config` directly so values like `-5` or JSON payloads aren't misinterpreted as CLI flags.
+    if (rawArgs[0] === "config" && !rawArgs.includes("-h") && !rawArgs.includes("--help")) {
+        const [, sub, key, ...valueParts] = rawArgs;
+        if (!sub || sub === "path")
+            return console.log(configPath());
+        if (sub === "get") {
+            const cfg = loadConfig();
+            const v = key ? key.split(".").reduce((o, k) => o?.[k], cfg) : cfg;
+            return console.log(JSON.stringify(v, null, 2));
+        }
+        if (sub === "set" && key && valueParts.length > 0) {
+            const value = valueParts.join(" ");
+            setConfigValue(key, value);
+            const running = !!readPid();
+            console.log(`Set ${key}.${running ? " Daemon will hot-reload within a few seconds." : ""}`);
+            if (key === "art.dynamic.enabled" && loadConfig().art.dynamic.enabled && loadConfig().art.dynamic.githubRepo === REPO) {
+                console.log(`Tip: if you don't own ${REPO}, also run \`t3code-rpc config set art.dynamic.githubRepo <you/your-public-repo>\`.`);
+            }
+            return;
+        }
+        if (sub === "unset" && key) {
+            unsetConfigValue(key);
+            console.log(`Unset ${key} (reverted to default).${readPid() ? " Daemon will hot-reload within a few seconds." : ""}`);
+            return;
+        }
+        if (sub === "reset") {
+            resetConfig();
+            console.log(`Reset config to defaults.${readPid() ? " Daemon will hot-reload within a few seconds." : ""}`);
+            return;
+        }
+        if (sub === "defaults")
+            return console.log(JSON.stringify(DEFAULT_CONFIG, null, 2));
+        if (sub === "show")
+            return console.log(JSON.stringify(readUserConfig(), null, 2));
+        throw new Error("usage: t3code-rpc config [path|get [key]|set <key> <value>|unset <key>|reset|defaults|show]");
+    }
     const { values, positionals } = parseArgs({
         allowPositionals: true,
         options: {
             watch: { type: "boolean", short: "w" },
             follow: { type: "boolean", short: "f" },
+            json: { type: "boolean" },
             days: { type: "string" },
             as: { type: "string" },
             with: { type: "string" },
@@ -414,7 +569,7 @@ async function main() {
             await stop();
             return start();
         case "status":
-            return status();
+            return status(!!values.json);
         case "preview":
             return preview(!!values.watch);
         case "demo":
@@ -422,41 +577,13 @@ async function main() {
         case "usage":
             return usage(values.days !== undefined ? Number(values.days) : undefined);
         case "doctor":
-            return doctor();
+            return doctor(!!values.json);
         case "install":
             return install();
         case "uninstall":
             return uninstall();
-        case "logs": {
-            if (!existsSync(logFile()))
-                return console.log("No log yet.");
-            if (values.follow) {
-                spawn("tail", ["-n", "50", "-f", logFile()], { stdio: "inherit" });
-                return;
-            }
-            console.log(readFileSync(logFile(), "utf8").split("\n").slice(-60).join("\n"));
-            return;
-        }
-        case "config": {
-            const [sub, key, value] = rest;
-            if (!sub || sub === "path")
-                return console.log(configPath());
-            if (sub === "get") {
-                const cfg = loadConfig();
-                const v = key ? key.split(".").reduce((o, k) => o?.[k], cfg) : cfg;
-                return console.log(JSON.stringify(v, null, 2));
-            }
-            if (sub === "set" && key && value !== undefined) {
-                setConfigValue(key, value);
-                console.log(`Set ${key}. Restart to apply: t3code-rpc restart`);
-                return;
-            }
-            if (sub === "defaults")
-                return console.log(JSON.stringify(DEFAULT_CONFIG, null, 2));
-            if (sub === "show")
-                return console.log(JSON.stringify(readUserConfig(), null, 2));
-            throw new Error("usage: t3code-rpc config [path|get [key]|set <key> <value>|defaults|show]");
-        }
+        case "logs":
+            return showLogs(!!values.follow);
         default:
             console.log(HELP);
             process.exitCode = 1;

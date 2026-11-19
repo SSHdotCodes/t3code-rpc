@@ -47,6 +47,7 @@ export interface GifOptions {
   size: number;
   fps: number;
   out: string;
+  maxColors?: number;
 }
 
 function run(cmd: string, args: string[], input?: (stdin: NodeJS.WritableStream) => Promise<void>): Promise<void> {
@@ -88,8 +89,9 @@ function write(stream: NodeJS.WritableStream, chunk: Buffer): Promise<void> {
  */
 export async function encodeGif(frameCount: number, frameAt: (i: number) => string, opts: GifOptions): Promise<void> {
   await mkdir(dirname(opts.out), { recursive: true });
+  const maxColors = Math.max(16, Math.min(255, opts.maxColors ?? 128));
   const filter =
-    "[0:v]split[a][b];[a]palettegen=max_colors=255:stats_mode=full:reserve_transparent=0[p];" +
+    `[0:v]split[a][b];[a]palettegen=max_colors=${maxColors}:stats_mode=full:reserve_transparent=0[p];` +
     "[b][p]paletteuse=dither=none:diff_mode=rectangle";
   const args = [
     "-hide_banner",

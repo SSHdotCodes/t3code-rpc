@@ -9,7 +9,7 @@ import type { CharacterKind } from "../render/characters.ts";
 import type { Orbiter, SceneKind } from "../render/scenes.ts";
 import type { ActiveThread, ActivityKind, AgentRef, AppStatus, ChildAgent, T3Snapshot, UsageSummary } from "../types.ts";
 import type { Instances } from "../t3/instances.ts";
-import { agentLabel, breakdown, characterFor, formatTokens, plural, windowLabel } from "./format.ts";
+import { agentLabel, breakdown, characterFor, formatTokens, plural, providerName, windowLabel } from "./format.ts";
 
 export type ActivityScene = Exclude<SceneKind, "orbit">;
 
@@ -78,12 +78,25 @@ function backgroundNote(threads: ActiveThread[]): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
+function metricValue(cfg: Config, t: UsageSummary["totals"]): number {
+  return cfg.tokens.metric === "output" ? t.output : cfg.tokens.metric === "fresh" ? Math.max(0, t.total - t.cachedInput) : t.total;
+}
+
 export function tokenLine(cfg: Config, usage: UsageSummary | null): string | null {
   if (!cfg.tokens.show || !usage) return null;
-  const t = usage.totals;
-  const value = cfg.tokens.metric === "output" ? t.output : cfg.tokens.metric === "fresh" ? Math.max(0, t.total - t.cachedInput) : t.total;
+  const value = metricValue(cfg, usage.totals);
   const noun = cfg.tokens.metric === "output" ? "output tokens" : "tokens";
   return `⚡ ${formatTokens(value)} ${noun} · ${windowLabel(usage.windowDays)}`;
+}
+
+export function tokenLines(cfg: Config, usage: UsageSummary | null): string[] {
+  const main = tokenLine(cfg, usage);
+  if (!main || !usage) return [];
+  if (cfg.tokens.showToday && usage.today && usage.windowDays !== 1 && usage.today.total > 0) {
+    const noun = cfg.tokens.metric === "output" ? "output tokens" : "tokens";
+    return [main, `⚡ ${formatTokens(metricValue(cfg, usage.today))} ${noun} · today`];
+  }
+  return [main];
 }
 
 function tokenHover(usage: UsageSummary | null): string | null {
@@ -91,23 +104,32 @@ function tokenHover(usage: UsageSummary | null): string | null {
   const t = usage.totals;
   const hit = t.input > 0 ? Math.round((t.cachedInput / t.input) * 100) : 0;
   const count = t.sessions !== undefined ? plural(t.sessions, "session") : plural(t.turns, "turn");
-  return `${formatTokens(t.total)} tokens ${windowLabel(usage.windowDays)} · ${formatTokens(t.output)} out · ${hit}% cached · ${count}`;
+  const base = `${formatTokens(t.total)} tokens ${windowLabel(usage.windowDays)} · ${formatTokens(t.output)} out · ${hit}% cached · ${count}`;
+  const drivers = Object.entries(usage.byDriver)
+    .filter(([, v]) => v.total > 0)
+    .sort((a, b) => b[1].total - a[1].total);
+  if (drivers.length > 1) {
+    const top = drivers
+      .slice(0, 2)
+      .map(([d, v]) => `${providerName({ instanceId: null, driver: d, model: null })} ${formatTokens(v.total)}`)
+      .join(", ");
+    if (base.length + top.length + 3 <= 128) return `${base} · ${top}`;
+  }
+  return base;
 }
 
 export class Director {
-  private lastShownOutcomeAt = 0;
-
   decide(input: DecideInput): Decision | null {
     const { cfg, app, snapshot, usage } = input;
     const now = input.now ?? Date.now();
     if (!app.running || !snapshot) return null;
     const names = input.instances ?? {};
-    const tokens = tokenLine(cfg, usage);
+    const tokenRotations = tokenLines(cfg, usage);
     const hover = tokenHover(usage);
     const label = (a: AgentRef) => (cfg.showModel ? agentLabel(a, names) : agentLabel({ ...a, model: null }, names));
 
     const threads = snapshot.threads;
-    if (threads.length === 0) return this.restful(input, now, tokens, hover, label);
+    if (threads.length === 0) return this.restful(input, now, tokenRotations, hover, label);
 
     const busySince = threads.reduce<number | null>((min, t) => (t.startedAt && (!min || t.startedAt < min) ? t.startedAt : min), null);
     const project = cfg.showProject ? (threads.find((t) => t.projectName)?.projectName ?? null) : null;
@@ -119,10 +141,13 @@ export class Director {
       const t = threads[0]!;
       const a = ACTIVITY[t.activity] ?? ACTIVITY.working;
       const character = characterFor(t.agent, names);
+      const bg = backgroundNote([t]);
+      const agentState = withProject(label(t.agent)) + (bg ? ` · ${bg}` : "");
+      const blocked = t.activity === "approval" || t.activity === "question";
       return {
         art: { kind: "activity", scene: a.scene, character },
         details: a.details,
-        stateLines: [withProject(label(t.agent)), ...(tokens ? [tokens] : [])],
+        stateLines: blocked ? [agentState] : [agentState, ...tokenRotations],
         largeText: `${label(t.agent)} ${a.verb}`,
         badge: character,
         smallText: hover ?? label(t.agent),
@@ -151,28 +176,29 @@ export class Director {
     const waiting = threads.filter((t) => t.activity === "approval" || t.activity === "question").length;
     const team = breakdown(orbitAgents, names);
     const lead = conductorThread ? label(conductorThread.agent) : null;
-    const details = conductorThread ? `🪄 Orchestrating ${plural(count, "agent")}` : `🪄 Running ${count} agents at once`;
+    const baseDetails = conductorThread ? `🪄 Orchestrating ${plural(count, "agent")}` : `🪄 Running ${count} agents at once`;
+    const details = waiting > 0 ? `✋ Waiting on you · ${plural(count, "agent")}` : baseDetails;
     const extras = [
       otherAgents ? `+${plural(otherAgents, "more agent")}` : "",
       backgroundNote(conductorThread ? [conductorThread] : threads) ?? "",
-      waiting ? `${waiting} waiting on me` : "",
+      waiting > 1 ? `${waiting} waiting on me` : "",
     ].filter(Boolean);
     const busy = conductorThread ? working(liveChildren(conductorThread)) : null;
     const teamLine = withProject(lead ? `${lead} → ${team}` : team) + extras.map((e) => ` · ${e}`).join("");
     return {
       art: { kind: "orbit", conductor, orbiters: orbitAgents.map((a) => characterFor(a, names)), count },
       details,
-      stateLines: [teamLine, ...(tokens ? [tokens] : [])],
+      stateLines: waiting > 0 ? [teamLine] : [teamLine, ...tokenRotations],
       largeText: lead ? `${lead} conducting ${team}${busy !== null && busy < count ? ` · ${busy} working right now` : ""}` : `T3 Code juggling ${team}`,
       badge: conductorThread ? conductor : "t3",
       smallText: hover ?? (lead ?? "T3 Code"),
       startedAt: busySince,
-      mood: `orbit:${conductor}:${count}`,
+      mood: waiting > 0 ? `orbit:${conductor}:${count}:waiting` : `orbit:${conductor}:${count}`,
     };
   }
 
   /** Nothing running: celebrate, sulk, or nap. */
-  private restful(input: DecideInput, now: number, tokens: string | null, hover: string | null, label: (a: AgentRef) => string): Decision | null {
+  private restful(input: DecideInput, now: number, tokenRotations: string[], hover: string | null, label: (a: AgentRef) => string): Decision | null {
     const { cfg, snapshot } = input;
     const outcome = snapshot!.lastOutcome;
     const lastAgent = outcome?.agent ?? snapshot!.lastAgent;
@@ -182,12 +208,11 @@ export class Director {
     if (outcome && (outcome.status === "completed" || outcome.status === "failed")) {
       const hold = (outcome.status === "completed" ? cfg.doneHoldSec : cfg.errorHoldSec) * 1000;
       if (now - outcome.at < hold) {
-        this.lastShownOutcomeAt = outcome.at;
         const done = outcome.status === "completed";
         return {
           art: { kind: "activity", scene: done ? "done" : "error", character },
           details: done ? "✨ Task complete" : "🌧️ Hit a snag",
-          stateLines: [label(outcome.agent), ...(tokens ? [tokens] : [])],
+          stateLines: [label(outcome.agent), ...tokenRotations],
           largeText: done ? `${label(outcome.agent)} finished a task` : `${label(outcome.agent)} ran into a problem`,
           badge: character,
           smallText: hover ?? label(outcome.agent),
@@ -200,7 +225,7 @@ export class Director {
     return {
       art: { kind: "activity", scene: "idle", character },
       details: "💤 Idle",
-      stateLines: tokens ? [tokens] : [lastAgent ? label(lastAgent) : "Ready for the next task"],
+      stateLines: tokenRotations.length ? tokenRotations : [lastAgent ? label(lastAgent) : "Ready for the next task"],
       largeText: lastAgent ? `${label(lastAgent)} is napping` : "Napping",
       badge: lastAgent ? character : "t3",
       smallText: hover ?? "T3 Code",

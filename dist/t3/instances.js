@@ -3,14 +3,22 @@
 // enough to pick the right logo and name. Binary paths, env and anything else
 // in the settings never leave this function.
 import { readFileSync, statSync } from "node:fs";
-let cache = null;
+const cache = new Map();
 const safe = (v, max = 48) => typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
 export function readInstances(settingsPath) {
+    let st;
     try {
-        const st = statSync(settingsPath);
-        const key = `${settingsPath}:${st.mtimeMs}:${st.size}`;
-        if (cache?.key === key)
-            return cache.value;
+        st = statSync(settingsPath);
+    }
+    catch {
+        cache.delete(settingsPath);
+        return {};
+    }
+    const key = `${st.mtimeMs}:${st.size}`;
+    const hit = cache.get(settingsPath);
+    if (hit?.key === key)
+        return hit.value;
+    try {
         const raw = JSON.parse(readFileSync(settingsPath, "utf8"));
         const value = {};
         for (const [id, entry] of Object.entries(raw.providerInstances ?? {})) {
@@ -19,10 +27,11 @@ export function readInstances(settingsPath) {
             const e = entry;
             value[id] = { driver: safe(e.driver), displayName: safe(e.displayName), agentId: safe(e.config?.agentId) };
         }
-        cache = { key, value };
+        cache.set(settingsPath, { key, value });
         return value;
     }
     catch {
-        return cache?.value ?? {};
+        // Transient mid-write parse failure: keep the last good reading for THIS settings file only.
+        return hit?.value ?? {};
     }
 }

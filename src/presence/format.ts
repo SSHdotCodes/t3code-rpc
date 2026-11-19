@@ -54,9 +54,10 @@ export function characterFor(agent: AgentRef | null | undefined, instances: Inst
   for (const [needle, kind] of DRIVER_CHARACTERS) if (needle !== "pi" && hints.includes(needle)) return kind;
   const model = (agent.model ?? "").toLowerCase();
   if (model.includes("claude") || /^(opus|sonnet|haiku|fable)/.test(model)) return "claude";
-  if (model.startsWith("gpt") || model.includes("codex")) return "codex";
+  if (model.startsWith("gpt") || model.includes("codex") || /^o\d(?:-|$)/.test(model)) return "codex";
   if (model.startsWith("grok")) return "grok";
   if (model.includes("gemini")) return "gemini";
+  if (model.includes("antigravity")) return "antigravity";
   if (model.includes("mistral") || model.includes("devstral")) return "mistral";
   return "generic";
 }

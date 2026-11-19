@@ -3,11 +3,11 @@
 Discord Rich Presence for [T3 Code](https://t3.codes): animated art that follows what your agents are doing, and your token usage for the last 30 days.
 
 <p>
-<img src="assets/art/orbit/claude-codex-3.gif" width="160" alt="Clawd orchestrating three Codex agents">
-<img src="assets/art/thinking/codex.gif" width="160" alt="Codex thinking">
-<img src="assets/art/coding/t3.gif" width="160" alt="T3 Code editing code">
-<img src="assets/art/idle/claude.gif" width="160" alt="Clawd napping">
-<img src="assets/art/done/grok.gif" width="160" alt="Grok celebrating">
+<img src="https://raw.githubusercontent.com/SSHdotCodes/t3code-rpc/art/orbit/claude-codex-3.gif" width="160" alt="Clawd orchestrating three Codex agents">
+<img src="https://raw.githubusercontent.com/SSHdotCodes/t3code-rpc/art/thinking/codex.gif" width="160" alt="Codex thinking">
+<img src="https://raw.githubusercontent.com/SSHdotCodes/t3code-rpc/art/coding/t3.gif" width="160" alt="T3 Code editing code">
+<img src="https://raw.githubusercontent.com/SSHdotCodes/t3code-rpc/art/idle/claude.gif" width="160" alt="Clawd napping">
+<img src="https://raw.githubusercontent.com/SSHdotCodes/t3code-rpc/art/done/grok.gif" width="160" alt="Grok celebrating">
 </p>
 
 Every character is the real logo: the T3 Code Nightly icon, Clawd for Claude, and the Codex, Grok, Gemini, Cursor, OpenCode, Muse, Mistral, Pi and Antigravity marks. They all get little arms and legs.
@@ -42,11 +42,11 @@ t3code-rpc install    # start at login (launchd / systemd / Startup folder)
 t3code-rpc doctor     # check Discord, T3 Code and art hosting
 ```
 
-Other commands: `status`, `preview --watch`, `usage --days 7`, `demo orbit --as claude --with codex,codex,grok`, `logs -f`, `stop`, `start`, `uninstall`.
+Other commands: `status [--json]`, `preview --watch`, `usage --days 7`, `demo orbit --as claude --with codex,codex,grok`, `logs -f`, `stop`, `start`, `uninstall`.
 
 ## Configure
 
-`~/.t3code-rpc/config.json` (or `t3code-rpc config set <key> <value>`):
+`~/.t3code-rpc/config.json` (or `t3code-rpc config set <key> <value>` / `unset <key>` / `reset`; the running daemon hot-reloads changes automatically):
 
 | Key | Default | |
 | --- | --- | --- |
@@ -54,6 +54,7 @@ Other commands: `status`, `preview --watch`, `usage --days 7`, `demo orbit --as 
 | `tokens.source` | `"t3-usage"` | `t3-usage` matches T3 Code's Usage page: every local Claude Code, Codex, Grok, Pi and OpenCode session. `t3-turns` counts only turns run inside T3 |
 | `tokens.metric` | `"total"` | `total` (input incl. cache + output), `fresh` (without cache reads) or `output` |
 | `tokens.show` | `true` | |
+| `tokens.showToday` | `false` | Also rotate in today's token total alongside the window total |
 | `showModel` | `true` | Show model names (otherwise just the provider) |
 | `showProject` | `false` | Append the project folder name. Chat names are never shown. |
 | `showElapsed` | `true` | Elapsed timer |
@@ -64,12 +65,12 @@ Other commands: `status`, `preview --watch`, `usage --days 7`, `demo orbit --as 
 | `activityType` | `0` | 0 Playing, 2 Listening, 3 Watching, 5 Competing |
 | `buttons` | T3 Code + this repo | Up to two `{ "label", "url" }` |
 | `clientId` | T3 Code app | Your own Discord application id, if you want one |
-| `art.baseUrl` | this repo's `assets/art` | Where the GIF pack is hosted |
+| `art.baseUrl` | this repo's `art` branch | Where the GIF pack is hosted |
 | `art.dynamic.enabled` | `false` | Render exact mixed orchestration rings on demand (see below) |
 
 ### Exact orchestration rings
 
-The pack includes pre-rendered rings for common teams, for example Claude, Codex or the T3 icon conducting several Claude, Codex or Grok agents. For any other mix, such as "Opus conducting 3 Codex, 1 Grok and 1 Mistral", turn on dynamic rings. Each new combination is rendered once locally (needs `ffmpeg`) and pushed to an `art-cache` branch of a public repo you own, using `gh auth`. After that it's reused forever.
+The pack includes pre-rendered rings for common single-provider and mixed teams (Claude, Codex or the T3 icon conducting several agents). For exact custom compositions, such as "Opus conducting 3 Codex, 1 Grok and 1 Mistral", turn on dynamic rings. Each new combination is rendered once locally (needs `ffmpeg`) and pushed to an `art-cache` branch of a public repo you own, using `gh auth`. After that it's reused forever.
 
 ```sh
 t3code-rpc config set art.dynamic.enabled true
@@ -81,7 +82,7 @@ t3code-rpc config set art.dynamic.githubRepo you/your-public-repo
 - **State:** T3 Code keeps its state in `~/.t3/userdata/statev2.sqlite`. The daemon opens it **read-only** and polls a handful of indexed queries every second (about 5 ms): active runs, live turn items, pending approvals, and subagent and delegated-child relationships. Liveness comes from the server's runtime record plus its public `/.well-known/t3/environment` probe.
 - **Tokens:** the same "processed tokens" as T3 Code's Usage page. T3's transcript scan cache (`usage-scan-cache-v5.json`) seeds a live incremental scan of its recorded Claude, Codex, Grok and Pi directories, plus OpenCode's own databases, de-duplicated and windowed by local calendar day. Usage refreshes every 60 seconds without needing to reopen T3's Usage page. Only usage metadata is retained. If T3 hasn't written that cache yet, it falls back to T3's per-turn accounting.
 - **Discord:** a small built-in IPC client with no dependencies. It dedupes payloads, caps writes at 4 per 20 s with a minimum gap, and reconnects with jittered backoff.
-- **Art:** every frame is drawn as SVG (`src/render`), rasterized with resvg and encoded with ffmpeg using a shared palette. `npm run assets` re-renders the whole pack in about 15 s; `npm run preview` renders contact sheets.
+- **Art:** every frame is drawn as SVG (`src/render`), rasterized with resvg and encoded with ffmpeg using a shared palette. The pre-rendered pack lives on the orphan `art` branch (so clones and installs stay lightweight). `npm run assets` re-renders the pack locally, `npm run assets:publish` publishes the orphan `art` branch, and `npm run preview` renders contact sheets.
 
 ## Credits
 
